@@ -9,7 +9,7 @@ import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from 
 import { AGENTS, agentById, type Agent } from './agents'
 import { RpView } from './rp'
 import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
-import { FAMILIES, meshBg, tint, useAppLook } from './appicon'
+import { FAMILIES, cardBg, riffVars, tint, useAppLook } from './appicon'
 import { flowSummary, loadFlows, runFlow, runSummary, tidy, upsertFlow, type Flow, type RunResult } from './flow'
 import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
@@ -34,17 +34,11 @@ const openLink = (url: string) => { if (isNative) Phone.openUrl({ url }).catch((
 export default function App() {
   const [view, setView] = useState<View>('home')
   const wide = () => window.innerWidth >= 980
-  const [side, setSide] = useState(wide)
-  // v0.17：折叠态在手机和桌面都生效——折叠后左侧留一条图标栏（新对话 / 技能 / MCP），状态存在 localStorage。
-  // 桌面：点图标栏顶部按钮展开回完整侧栏。手机：点它临时拉出完整抽屉（盖在图标栏上），选完或点遮罩回到图标栏。
-  const [mini, setMini] = useState(() => localStorage.getItem('lumi.sideMini') === '1')
-  const [narrow, setNarrow] = useState(() => !wide())
-  useEffect(() => { const on = () => setNarrow(!wide()); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
-  const putMini = (n: boolean) => { localStorage.setItem('lumi.sideMini', n ? '1' : '0'); setMini(n) }
-  const toggleMini = () => {
-    if (mini) { if (wide()) { putMini(false); setSide(true) } else setSide(o => !o) }
-    else { putMini(true); if (!wide()) setSide(false) }
-  }
+  // v0.18：折叠态就是侧栏的「关闭」态。关上后左侧永远留一条图标栏（新对话 / 技能 / MCP + 展开按钮），没有完全隐藏的抽屉，也没有另外的迷你开关。
+  // 展开：桌面推开内容显示完整侧栏；手机是盖在内容上的抽屉（带遮罩），关上回到图标栏。状态存 localStorage 'lumi.sideMini'（'1' = 折叠）。
+  const [side, setSideS] = useState(() => { const v = localStorage.getItem('lumi.sideMini'); return v == null ? wide() : v === '0' })
+  const setSide = (o: boolean) => { localStorage.setItem('lumi.sideMini', o ? '0' : '1'); setSideS(o) }
+  const toggleSide = () => setSide(!side)
   const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
   const [projects, setProjects] = useState<Project[]>(loadProjects)
@@ -132,24 +126,23 @@ export default function App() {
   const [wallVer, setWallVer] = useState(() => Number(localStorage.getItem('lumi.wallVer') || 0))
   useEffect(() => { if (settings.theme === 'wallpaper') blobUrl('wallpaper:' + wallVer).then(u => setWall(u)); else setWall(null) }, [settings.theme, wallVer])
   const plan = gu?.planName || null
-  const menuBtn = <button className="side-btn press" onClick={() => setSide(true)} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
-  const back = (to: View, title: string) => <div className="sub-head">{menuBtn}<button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
-  const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h">{menuBtn}<div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
+  const back = (to: View, title: string) => <div className="sub-head"><button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
+  const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h"><div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
   const flowEd = view.startsWith('flow:') ? view.slice(5) : null
   const flowApp = view.startsWith('flowapp:') ? view.slice(8) : null
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : 'side-mini'}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} mini={mini && !(narrow && side)} onToggleMini={toggleMini} onUpgrade={() => openLink(purchasePage(settings))} />
+        plan={plan} mini={!side} onToggleMini={toggleSide} onUpgrade={() => openLink(purchasePage(settings))} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
           <div className="scroll">
             <div className={`wrap ${view === 'home' ? 'wide' : ''}`}>
-              {view === 'home' && <><div className="home-top">{menuBtn}</div>
+              {view === 'home' && <><div className="home-top" />
                 <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
                   onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
               {view === 'flows' && <>{head('Flow', '把常用的手机操作存成一键工作流')}<FlowsPage go={go} /></>}
@@ -177,7 +170,7 @@ export default function App() {
           </div>
         </div>
         {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
-          project={projects.find(p => p.id === open.project)} onMenu={() => setSide(true)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
+          project={projects.find(p => p.id === open.project)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
       </main>
       <Preview />
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
@@ -704,7 +697,7 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
       {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
-        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
+        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="riff" style={{ background: cardBg(FAMILIES[k]), color: FAMILIES[k].deep }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={1.9} /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
         <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
       </div> : <div className="fapp-grid">
@@ -721,7 +714,7 @@ function AppCard({ app, flows, onOpen }: { app: string; flows: Flow[]; onOpen: (
   const t = tint(useAppLook(app, pkg))
   const names = flows.slice(0, 2).map(f => f.name).join(' · ')
   return (
-    <button className="fapp mesh press" style={{ background: t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink }} onClick={onOpen}>
+    <button className="fapp riff press" style={riffVars(t)} onClick={onOpen}>
       <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={44} /></span><span className="fa-n">{flows.length}</span></div>
       <div className="fa-name ell">{app}</div>
       <div className="fa-sub ell">{names}{flows.length > 2 ? ` 等 ${flows.length} 个` : ''}</div>
@@ -749,7 +742,7 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   const total = flows.reduce((n, f) => n + f.runs, 0)
   return (
     <section className="fade">
-      <div className="fhero mesh" style={{ background: t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink }}>
+      <div className="fhero riff" style={riffVars(t)}>
         <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={60} /></span>
         <div className="fh-name">{app}</div>
         <div className="fh-sub">{flows.length} 个 Flow{total ? ` · 运行过 ${total} 次` : ''}</div>
@@ -757,14 +750,14 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
       </div>
       {msg && !res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{msg}</div>}
       <div className="ftile-grid">
-        {flows.map((f, i) => { const c = tint(look, [0, -18, 18, -36, 36][i % 5]); return (
-          <div key={f.id} className={`ftile mesh press ${running === f.id ? 'busy' : ''}`} style={{ background: c.bg, ['--glow' as string]: c.glow, ['--ink' as string]: c.ink }}
+        {flows.map(f => { return (
+          <div key={f.id} className={`ftile riff press ${running === f.id ? 'busy' : ''}`} style={riffVars(t)}
             role="button" tabIndex={0} onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
             <div className="ft-top"><span className="ft-glyph"><Icon n={flowGlyph(f)} s={19} w={2} /></span>
-              <span className="ft-play" aria-hidden="true"><Icon n="play" s={12} w={2.6} /></span>
               <button className="ft-more" onClick={e => { e.stopPropagation(); go(`flow:${f.id}` as View) }} aria-label="编辑"><Icon n="more" s={18} w={2.4} /></button></div>
             <div className="ft-name">{f.name}</div>
-            <div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
+            <div className="ft-foot"><div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
+              <span className="ft-play" aria-hidden="true"><Icon n="play" s={12} w={2.6} /></span></div>
           </div>) })}
       </div>
       {flows.length > 0 && <div className="t13" style={{ textAlign: 'center', marginTop: 14 }}>点卡片运行，点右上角编辑</div>}
@@ -1039,9 +1032,9 @@ function MediaView({ m }: { m: Media }) {
     : <a href={url} target="_blank" rel="noreferrer"><img className="media" src={url} alt={m.prompt} /></a>
 }
 
-function Chat({ conv, settings, tier, think, pending, clearPending, project, onMenu, onNew, onMode, update }: {
+function Chat({ conv, settings, tier, think, pending, clearPending, project, onNew, onMode, update }: {
   conv: Conv; settings: Settings; tier: Tier; think: boolean; pending: Pending | null; clearPending: () => void; project?: Project
-  onMenu: () => void; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
+  onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1200,7 +1193,6 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
       </div>
       <div className="edge-top" />
       <Glass className="chat-bar" radius={26}>
-        <button className="cb-btn cb-side" onClick={onMenu} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>

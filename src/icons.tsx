@@ -74,12 +74,11 @@ export function Icon({ n, s = 22, w = 1.9, c = 'currentColor' }: { n: string; s?
   )
 }
 
-/** 玻璃拟态图标：后面一块彩色底，前面一片磨砂玻璃，图标在玻璃上。 */
+/** v0.18 图标块：单个小 squircle，浅色色调底 + 1px 发丝描边 + 同色系深色线条图标（参考 Figma Riffs 的小图标块）。tone 决定色调。 */
 export function GlassIcon({ n, tone = 'coral', s = 34 }: { n: string; tone?: string; s?: number }) {
   return (
-    <span className={`gi ${tone}`} style={{ width: s, height: s }}>
-      <span className="gi-back" />
-      <span className="gi-front"><Icon n={n} s={Math.round(s * 0.52)} w={1.8} c="#fff" /></span>
+    <span className={`gi ${tone}`} style={{ width: s, height: s, borderRadius: Math.round(s * 0.32) }}>
+      <Icon n={n} s={Math.round(s * 0.56)} w={1.8} />
     </span>
   )
 }
