@@ -36,11 +36,13 @@ export default function App() {
   const wide = () => window.innerWidth >= 980
   const [side, setSide] = useState(wide)
   // v0.17：折叠态在手机和桌面都生效——折叠后左侧留一条图标栏（新对话 / 技能 / MCP），状态存在 localStorage。
-  // 手机上点图标栏顶部的按钮展开成完整抽屉；抽屉里再点一次折叠回图标栏；点遮罩关闭则回到完全隐藏的抽屉。
+  // 桌面：点图标栏顶部按钮展开回完整侧栏。手机：点它临时拉出完整抽屉（盖在图标栏上），选完或点遮罩回到图标栏。
   const [mini, setMini] = useState(() => localStorage.getItem('lumi.sideMini') === '1')
+  const [narrow, setNarrow] = useState(() => !wide())
+  useEffect(() => { const on = () => setNarrow(!wide()); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   const putMini = (n: boolean) => { localStorage.setItem('lumi.sideMini', n ? '1' : '0'); setMini(n) }
   const toggleMini = () => {
-    if (mini) { putMini(false); setSide(true) }
+    if (mini) { if (wide()) { putMini(false); setSide(true) } else setSide(o => !o) }
     else { putMini(true); if (!wide()) setSide(false) }
   }
   const shut = () => { if (!wide()) setSide(false) }
@@ -141,7 +143,7 @@ export default function App() {
     <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} mini={mini} onToggleMini={toggleMini} onUpgrade={() => openLink(purchasePage(settings))} />
+        plan={plan} mini={mini && !(narrow && side)} onToggleMini={toggleMini} onUpgrade={() => openLink(purchasePage(settings))} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
@@ -263,7 +265,7 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
         <button className="row press-row" onClick={() => go('settings')}><GlassIcon n="gear" tone="slate" s={32} /><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
       </div>
       <div className="list" style={{ marginTop: 14 }}>
-        <button className="row press-row" onClick={() => openLink(keyPage(settings))}><GlassIcon n="key" tone="sky" s={32} /><span className="t16 grow">获取 API Key</span><span className="t13">platform.qigai.tech</span>{ext}</button>
+        <button className="row press-row" onClick={() => openLink(keyPage(settings))}><GlassIcon n="key" tone="sky" s={32} /><span className="t16 grow">获取 API Key</span>{ext}</button>
         <button className="row press-row" onClick={() => openLink(feedbackPage())}><GlassIcon n="chat" tone="plum" s={32} /><span className="t16 grow">提交反馈</span>{ext}</button>
       </div>
     </section>
@@ -524,7 +526,7 @@ function Home({ convs, tier, think, setThink, onMode, onSend, onOpen, onDelete }
         <div className="cc-row">
           <button className={`cc-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={20} w={2} /></button>
           <button className="chip" onClick={onMode}><El t={tier} s={20} />{MODEL_NAME[tier]}<Icon n="down" s={13} w={2.4} /></button>
-          <button className={`chip ${think ? 'on' : ''}`} onClick={() => setThink(!think)}><Icon n="spark" s={14} w={2.2} />深度思考</button>
+          <button className={`chip chip-think ${think ? 'on' : ''}`} onClick={() => setThink(!think)} aria-label="深度思考" title="深度思考"><Icon n="spark" s={14} w={2.2} /><span className="chip-tx">深度思考</span></button>
           <button className={`send big ${text.trim() ? 'on' : ''}`} onClick={go} aria-label="发送"><Icon n="up" s={20} c="#fff" w={2.4} /></button>
         </div>
         <div className="home-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} /></div>
@@ -759,10 +761,10 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
           <div key={f.id} className={`ftile mesh press ${running === f.id ? 'busy' : ''}`} style={{ background: c.bg, ['--glow' as string]: c.glow, ['--ink' as string]: c.ink }}
             role="button" tabIndex={0} onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
             <div className="ft-top"><span className="ft-glyph"><Icon n={flowGlyph(f)} s={19} w={2} /></span>
+              <span className="ft-play" aria-hidden="true"><Icon n="play" s={12} w={2.6} /></span>
               <button className="ft-more" onClick={e => { e.stopPropagation(); go(`flow:${f.id}` as View) }} aria-label="编辑"><Icon n="more" s={18} w={2.4} /></button></div>
             <div className="ft-name">{f.name}</div>
             <div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
-            <span className="ft-play"><Icon n="play" s={13} w={2.4} /></span>
           </div>) })}
       </div>
       {flows.length > 0 && <div className="t13" style={{ textAlign: 'center', marginTop: 14 }}>点卡片运行，点右上角编辑</div>}
