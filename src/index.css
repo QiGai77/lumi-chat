@@ -618,3 +618,20 @@ q-rp{color:#b8452f;font-weight:500}
 .shell-out{font-family:var(--mono,ui-monospace,monospace);font-size:12px;background:#141a26;color:#e9e2d8;border-radius:14px;padding:10px 12px;white-space:pre-wrap;max-height:220px;overflow:auto}
 .file-row{display:flex;align-items:center;gap:10px}
 .phone-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:10px;background:rgba(224,88,62,.1);color:var(--accent)}
+/* ---------- v0.15 Flow */
+.rec-dot{width:9px;height:9px;border-radius:5px;background:#ff6b55;display:inline-block;margin-right:6px;box-shadow:0 0 0 3px rgba(255,107,85,.25)}
+.flow-row{gap:10px}.flow-row .grow{cursor:pointer;min-width:0}
+.run-btn{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;padding:7px 13px;border-radius:14px;background:var(--accent);color:#fff;flex:none}
+.run-btn:disabled{opacity:.55}
+.flow-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.flow-steps li{background:var(--card);border:1px solid var(--card-line);border-radius:18px;overflow:hidden}
+.flow-steps li.ghost{background:rgba(155,130,255,.07);border-style:dashed}
+.flow-steps li.open{box-shadow:var(--warm-shadow)}
+.fs-head{width:100%;display:flex;align-items:center;gap:10px;padding:11px 12px;font-size:14.5px;text-align:left}
+.fs-n{width:22px;height:22px;border-radius:11px;background:rgba(20,26,38,.07);display:grid;place-items:center;font-size:12px;flex:none;color:var(--label2)}
+.fs-tag{font-size:11px;padding:2px 7px;border-radius:8px;background:rgba(20,26,38,.06);color:var(--label2);flex:none}
+.fs-tag.warn{background:rgba(224,88,62,.12);color:var(--accent)}
+.fs-body{padding:0 12px 12px;display:flex;flex-direction:column;gap:8px}
+.chip-t{font-size:12.5px;padding:6px 11px;border-radius:12px;background:rgba(20,26,38,.06);color:var(--label1)}
+.chip-t.on{background:var(--ink);color:#fff}.chip-t.danger{color:#c43c2a}
+.flow-save{display:inline-flex;align-items:center;gap:6px;margin:0 0 10px;font-size:13px;padding:8px 13px;border-radius:15px;background:rgba(224,88,62,.1);color:var(--accent);font-weight:600}

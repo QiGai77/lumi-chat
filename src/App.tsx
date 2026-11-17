@@ -8,12 +8,13 @@ import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
 import { AGENTS, agentById, type Agent } from './agents'
 import { RpView } from './rp'
-import { Phone, isNative, runTool, toolSpecs, toStep } from './phone'
+import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
+import { flowSummary, loadFlows, paramsIn, runFlow, saveFlows, stepLabel, tidy, upsertFlow, type Flow, type FlowStep } from './flow'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
 
-type View = 'home' | 'phone' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
+type View = 'home' | 'phone' | 'flows' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
 type Gen = 'chat' | 'image' | 'video'
 const GEN_LABEL: Record<Gen, string> = { chat: '对话', image: '生成图片', video: '生成视频' }
 const QUICK: [string, string][] = [
@@ -120,6 +121,7 @@ export default function App() {
   const menuBtn = <button className="side-btn press" onClick={() => setSide(true)} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
   const back = (to: View, title: string) => <div className="sub-head">{menuBtn}<button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
   const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h">{menuBtn}<div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
+  const flowEd = view.startsWith('flow:') ? view.slice(5) : null
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
@@ -135,6 +137,8 @@ export default function App() {
               {view === 'home' && <><div className="home-top">{menuBtn}</div>
                 <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
                   onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
+              {view === 'flows' && <>{head('Flow', '把常用的手机操作存成一键工作流')}<FlowsPage go={go} /></>}
+              {flowEd && <>{back('flows', '编辑 Flow')}<FlowEdit id={flowEd} settings={settings} done={() => go('flows')} /></>}
               {view === 'phone' && <>{head('手机连接', '无障碍、无线调试 ADB 和手机存储')}<PhonePage /></>}
               {view === 'chars' && <>{head('角色', '和角色卡里的人物沉浸式聊天，支持导入酒馆角色卡')}<CharsPage chars={chars} settings={settings}
                 add={c => setChars(cs => [c, ...cs])} onChat={c => newChat(undefined, { char: c })} onEdit={c => go(`char:${c.id}`)} convs={convs} onOpen={openConv} /></>}
@@ -184,6 +188,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClo
       <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
       {item('chars', 'mask', '角色', 'rose')}
       {item('phone', 'phone', '手机连接', 'sky')}
+      {item('flows', 'bolt', 'Flow', 'gold')}
       {item('skills', 'spark', '技能', 'plum')}
       {item('mcp', 'plug', 'MCP', 'sky')}
       {item('tasks', 'clock', '定时任务', 'gold')}
@@ -592,6 +597,175 @@ function ProjectStore({ p, save }: { p: Project; save: (p: Project) => void }) {
   </>
 }
 
+/* ---------------- Flow */
+function FlowsPage({ go }: { go: (v: View) => void }) {
+  const [flows, setFlows] = useState<Flow[]>(loadFlows)
+  const [pick, setPick] = useState(false)
+  const [q, setQ] = useState('')
+  const [apps, setApps] = useState<{ label: string; pkg: string }[]>([])
+  const [msg, setMsg] = useState('')
+  const [running, setRunning] = useState('')
+  useEffect(() => {
+    const on = () => setFlows(loadFlows())
+    window.addEventListener('lumi-flows', on)
+    const vis = async () => {
+      if (document.hidden || !isNative) return
+      const rec = localStorage.getItem('lumi.recording'); if (!rec) return
+      try {
+        const st = await Phone.recordStatus(); if (st.recording) return
+        localStorage.removeItem('lumi.recording')
+        const meta = JSON.parse(rec) as { app: string; pkg: string }
+        const steps = tidy(st.steps || [], meta.app)
+        if (steps.length < 2) { setMsg('没录到操作，再试一次'); return }
+        const fl = upsertFlow({ id: uid(), app: meta.app, pkg: meta.pkg, name: '新的 Flow', desc: '', steps, params: [], updated: Date.now(), runs: 0 })
+        go(`flow:${fl.id}` as View)
+      } catch (e) { setMsg((e as Error).message) }
+    }
+    document.addEventListener('visibilitychange', vis); vis()
+    return () => { window.removeEventListener('lumi-flows', on); document.removeEventListener('visibilitychange', vis) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (pick && isNative) Phone.apps({ q }).then(r => setApps(r.apps)).catch(() => {}) }, [pick, q])
+  const record = async (a: { label: string; pkg: string }) => {
+    setPick(false)
+    try {
+      if (!(await Phone.a11yStatus()).enabled) { setMsg('先到「手机连接」里打开无障碍'); return }
+      localStorage.setItem('lumi.recording', JSON.stringify({ app: a.label, pkg: a.pkg }))
+      await Phone.recordStart({ pkg: a.pkg, app: a.label })
+    } catch (e) { setMsg((e as Error).message) }
+  }
+  const run = async (f: Flow) => {
+    const vals: Record<string, string> = {}
+    for (const p of f.params) { const v = prompt(`${f.name} · ${p}`); if (v == null) return; vals[p] = v }
+    setRunning(f.id); setMsg('')
+    try { const r = await runFlow(f, vals); setMsg(r.ok ? `「${f.name}」完成，${r.done} 步` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`) }
+    catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
+  }
+  const groups = [...new Set(flows.map(f => f.app))]
+  return (
+    <section className="fade">
+      <div className="dev-acts" style={{ marginBottom: 14 }}>
+        <button className="btn-ink" onClick={() => isNative ? setPick(true) : setMsg('只有安卓 App 里可以录制')}><span className="rec-dot" />录制新 Flow</button>
+      </div>
+      {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
+      {pick && <div className="dev-card">
+        <div className="t16 b">选一个应用开始录制</div>
+        <input className="inp" placeholder="搜索应用，比如 小红书" value={q} onChange={e => setQ(e.target.value)} autoFocus />
+        <div className="list" style={{ maxHeight: 300, overflow: 'auto' }}>{apps.map(a => <button key={a.pkg} className="row press-row" onClick={() => record(a)}><span className="grow t16">{a.label}</span><span className="t12 ell" style={{ maxWidth: 140 }}>{a.pkg}</span></button>)}</div>
+        <div className="t13">开始后会自动打开这个应用，屏幕顶部有录制条。照常点一遍，点「完成」回到这里。</div>
+        <button className="btn-ghost" onClick={() => setPick(false)}>取消</button>
+      </div>}
+      {flows.length === 0 && !pick && <div className="empty-card"><GlassIcon n="bolt" tone="gold" s={56} /><div className="t16 b">还没有 Flow</div>
+        <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。也可以直接让模型帮你写一个。</div></div>}
+      {groups.map(g => <div key={g}>
+        <div className="sec">{g}</div>
+        <div className="list">{flows.filter(f => f.app === g).map(f => (
+          <div key={f.id} className="row flow-row">
+            <div className="grow" onClick={() => go(`flow:${f.id}` as View)}>
+              <div className="t16 b ell">{f.name}</div>
+              <div className="t13 ell">{f.steps.length} 步{f.params.length ? ' · 参数 ' + f.params.join('、') : ''}{f.runs ? ` · 运行 ${f.runs} 次` : ''}{f.lastOk === false ? ' · 上次失败' : ''}</div>
+            </div>
+            <button className="run-btn" disabled={!!running} onClick={() => run(f)}>{running === f.id ? '运行中' : <><Icon n="play" s={13} w={2.4} />运行</>}</button>
+          </div>))}</div>
+      </div>)}
+    </section>
+  )
+}
+
+const ADD_STEPS: { label: string; s: FlowStep }[] = [
+  { label: '回车 / 搜索', s: { kind: 'enter' } },
+  { label: '等待文字出现', s: { kind: 'wait', sel: { text: '' } } },
+  { label: '等 1 秒', s: { kind: 'sleep', ms: 1000 } },
+  { label: '返回', s: { kind: 'key', key: 'back' } },
+  { label: '向下滚动', s: { kind: 'scroll', forward: true } },
+  { label: '点击文字', s: { kind: 'tap', sel: { text: '' } } },
+  { label: '输入文字', s: { kind: 'input', text: '' } },
+]
+
+function FlowEdit({ id, settings, done }: { id: string; settings: Settings; done: () => void }) {
+  const [f, setF] = useState<Flow | undefined>(() => loadFlows().find(x => x.id === id))
+  const [open, setOpen] = useState<number | null>(null)
+  const [add, setAdd] = useState(false)
+  const [ai, setAi] = useState(''), [aiBusy, setAiBusy] = useState(false), [draft, setDraft] = useState<Flow | null>(null)
+  const [msg, setMsg] = useState('')
+  if (!f) return <div className="empty">这个 Flow 不存在了</div>
+  const put = (n: Flow) => { const x = { ...n, params: paramsIn(n.steps), updated: Date.now() }; setF(x); upsertFlow(x) }
+  const setStep = (i: number, s: FlowStep) => put({ ...f, steps: f.steps.map((x, j) => j === i ? s : x) })
+  const move = (i: number, d: number) => { const a = [...f.steps]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; put({ ...f, steps: a }); setOpen(j) }
+  const optimize = async () => {
+    setAiBusy(true); setDraft(null); setMsg('')
+    let out = ''
+    try {
+      await streamChat({ settings, tier: 'neon', think: false, signal: new AbortController().signal,
+        system: `你是安卓无障碍自动化专家。用户给你一个 Flow（JSON），请优化后只输出一个 JSON 对象 {"name","desc","steps"}，不要别的文字。规则：
+- 删掉重复、无意义、误触的步骤；保留 launch 作为第一步
+- 选择器优先用稳定的 id 和简短文字；坐标 x/y 是 0-1 的屏幕比例，保留作为兜底
+- 会变化的内容（搜索词、地址、商品、联系人）改成 {参数名}，参数名用简短中文
+- 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
+- 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
+- 付款、提交订单、发送、删除这类步骤加 confirm:true
+- 每步可以写一个简短中文 note 说明`,
+        messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}` }],
+        onDelta: t => { out = t } })
+      const j = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1))
+      if (!Array.isArray(j.steps) || !j.steps.length) throw new Error('模型没有给出步骤')
+      setDraft({ ...f, name: j.name || f.name, desc: j.desc || f.desc, steps: tidy(j.steps, f.app) })
+    } catch (e) { setMsg('优化失败：' + ((e as Error).message || '')) } finally { setAiBusy(false) }
+  }
+  const test = async () => {
+    const vals: Record<string, string> = {}
+    for (const p of f.params) { const v = prompt(`试运行 · ${p}`); if (v == null) return; vals[p] = v }
+    setMsg('运行中…')
+    try { const r = await runFlow(f, vals); setMsg(r.ok ? `完成，${r.done} 步` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`); if (!r.ok && r.failedAt != null) setOpen(r.failedAt) }
+    catch (e) { setMsg((e as Error).message) }
+  }
+  const S = draft || f
+  return (
+    <section className="fade">
+      <div className="mini-row"><input className="inp" value={f.app} onChange={e => put({ ...f, app: e.target.value })} placeholder="应用" style={{ flex: '0 0 32%' }} />
+        <input className="inp" value={f.name} onChange={e => put({ ...f, name: e.target.value })} placeholder="名称，比如 搜索" /></div>
+      <input className="inp" style={{ marginTop: 8 }} value={f.desc} onChange={e => put({ ...f, desc: e.target.value })} placeholder="说明（模型靠它判断什么时候用）" />
+      {f.params.length > 0 && <div className="t13" style={{ marginTop: 8 }}>参数：{f.params.map(p => <span key={p} className="phone-chip" style={{ marginRight: 6 }}>{`{${p}}`}</span>)}</div>}
+
+      <div className="dev-card" style={{ marginTop: 14 }}>
+        <div className="dev-top"><GlassIcon n="spark" tone="plum" s={40} /><div className="grow"><div className="t16 b">用 AI 优化</div><div className="t13">清理多余步骤、提取参数、加上等待和弹窗处理</div></div></div>
+        <input className="inp" value={ai} onChange={e => setAi(e.target.value)} placeholder="额外要求（可选），比如 搜索后点第一篇笔记" />
+        <div className="dev-acts"><button className="btn-ink" disabled={aiBusy} onClick={optimize}>{aiBusy ? '优化中…' : '优化'}</button>
+          {draft && <><button className="btn-ink" onClick={() => { put(draft); setDraft(null); setMsg('已采用优化结果') }}>采用（{draft.steps.length} 步）</button><button className="btn-ghost" onClick={() => setDraft(null)}>放弃</button></>}</div>
+        {draft && <div className="t13">预览：{draft.name}{draft.desc ? ' · ' + draft.desc : ''}</div>}
+      </div>
+
+      <div className="sec">{draft ? '优化后的步骤（预览）' : `步骤 · ${f.steps.length}`}</div>
+      <ol className="flow-steps">{S.steps.map((s, i) => (
+        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''}`}>
+          <button className="fs-head" onClick={() => !draft && setOpen(open === i ? null : i)}>
+            <span className="fs-n">{i + 1}</span><span className="grow ell">{stepLabel(s)}</span>
+            {s.optional && <span className="fs-tag">可选</span>}{s.confirm && <span className="fs-tag warn">确认</span>}
+          </button>
+          {open === i && !draft && <div className="fs-body">
+            {(s.kind === 'input') && <input className="inp" value={s.text || ''} onChange={e => setStep(i, { ...s, text: e.target.value })} placeholder="输入的文字，可用 {参数}" />}
+            {(s.kind === 'tap' || s.kind === 'wait') && <input className="inp" value={s.sel?.text || ''} onChange={e => setStep(i, { ...s, sel: { ...s.sel, text: e.target.value } })} placeholder="按文字找按钮" />}
+            {s.kind === 'sleep' && <input className="inp" inputMode="numeric" value={s.ms || 1000} onChange={e => setStep(i, { ...s, ms: Number(e.target.value) || 1000 })} placeholder="毫秒" />}
+            <input className="inp" value={s.note || ''} onChange={e => setStep(i, { ...s, note: e.target.value || undefined })} placeholder="备注（显示在悬浮条上）" />
+            {s.sel?.id && <div className="t12 ell">控件 id：{s.sel.id}</div>}
+            <div className="dev-acts">
+              <button className={`chip-t ${s.optional ? 'on' : ''}`} onClick={() => setStep(i, { ...s, optional: !s.optional })}>可选</button>
+              <button className={`chip-t ${s.confirm ? 'on' : ''}`} onClick={() => setStep(i, { ...s, confirm: !s.confirm })}>执行前确认</button>
+              <button className="chip-t" onClick={() => move(i, -1)}>上移</button><button className="chip-t" onClick={() => move(i, 1)}>下移</button>
+              <button className="chip-t danger" onClick={() => { put({ ...f, steps: f.steps.filter((_, j) => j !== i) }); setOpen(null) }}>删除</button>
+            </div></div>}
+        </li>))}</ol>
+      {!draft && <>
+        {add ? <div className="dev-acts">{ADD_STEPS.map(a => <button key={a.label} className="chip-t" onClick={() => { put({ ...f, steps: [...f.steps, { ...a.s, sel: a.s.sel ? { ...a.s.sel } : undefined }] }); setAdd(false); setOpen(f.steps.length) }}>{a.label}</button>)}</div>
+          : <button className="add-btn press" onClick={() => setAdd(true)}><Icon n="plus" s={18} w={2} />添加步骤</button>}
+        <div className="dev-acts" style={{ marginTop: 14 }}>
+          <button className="btn-ink" onClick={test}><Icon n="play" s={14} w={2.4} />试运行</button>
+          <button className="btn-ghost danger" onClick={() => { if (confirm(`删除 Flow「${f.name}」？`)) { saveFlows(loadFlows().filter(x => x.id !== f.id)); done() } }}>删除 Flow</button>
+        </div></>}
+      {msg && <div className="imp-msg ok" style={{ marginTop: 12 }}>{msg}</div>}
+    </section>
+  )
+}
+
 /* ---------------- 手机操控 */
 const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替用户操作手机。
 做法：
@@ -599,7 +773,9 @@ const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替�
 2. 打开应用用 phone_open_app；返回、回主屏用 phone_key。
 3. phone_shell 是 ADB 命令，只在用户已连接 ADB 且确实需要时用（比如查电量 dumpsys battery、截屏 screencap）。不要执行删除数据、卸载应用、改系统设置之类的危险命令，除非用户明确要求。
 4. 涉及付款、发消息给别人、删除内容等不可撤回的操作，执行前先停下来问用户确认。
-5. 做完后用一两句话告诉用户结果。`
+5. 如果用户的请求和某个已保存的 Flow 对得上，优先 flow_run（填好参数），比一步步操作快；Flow 失败时会告诉你卡在哪，你接着手动做完，再问用户要不要用 flow_save 修好它。
+6. 用户让你新建或优化 Flow 时，用 flow_save；选择器优先用 phone_screen 里看到的文字。
+7. 做完后用一两句话告诉用户结果。`
 
 function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
   const [open, setOpen] = useState(false)
@@ -871,7 +1047,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const agent = agentById(conv.agent)
   const char = charById(conv.char)
   const folder = project?.folder
-  const toolNames = [...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : [])]
+  const toolNames = [...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell', 'flow_list', 'flow_run', 'flow_save'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : [])]
   const rpUser = settings.rpUser || '用户'
   useEffect(() => { if (pinned.current) scroller.current?.scrollTo({ top: 1e9 }) }, [conv.messages])
 
@@ -906,7 +1082,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     const t0 = performance.now()
     let thinkMs = 0
     const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '',
-      conv.phone ? PHONE_PROMPT : '', folder ? `这个项目绑定了手机里的文件夹「${folder}」。用户要你写文件、做网页或保存内容时，用 phone_save 存进去（路径相对这个文件夹，比如 pages/index.html），存完告诉用户文件名。` : '',
+      conv.phone ? PHONE_PROMPT + '\n\n用户保存的 Flow：\n' + flowSummary(loadFlows()) : '', folder ? `这个项目绑定了手机里的文件夹「${folder}」。用户要你写文件、做网页或保存内容时，用 phone_save 存进去（路径相对这个文件夹，比如 pages/index.html），存完告诉用户文件名。` : '',
       settings.genUI && !conv.phone ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
     if (toolNames.length && !char) { await agentLoop(base, system); return }
     try {
@@ -929,6 +1105,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     const tools = toolSpecs(toolNames)
     const raw: ApiMsg[] = base.filter(m => !m.media).map(m => ({ role: m.role, content: m.content }))
     const steps: Step[] = []
+    takeTrace()
     const t0 = performance.now()
     let first = 0, tok = 0
     try {
@@ -955,7 +1132,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
         update(c => ({ ...c, messages: [...base, { role: 'assistant', content: '', tier, steps: [...steps] }] }))
       }
       addUsage(0, tok)
-      setLast(m => ({ ...m, ms: first, steps: [...steps], thinkMs: m.reasoning ? performance.now() - t0 : undefined }))
+      const tr = takeTrace()
+      setLast(m => ({ ...m, ms: first, steps: [...steps], thinkMs: m.reasoning ? performance.now() - t0 : undefined, ...(tr.length >= 2 && !steps.some(x => x.name === 'flow_save') ? { trace: tr } : {}) }))
     } catch (e) {
       if ((e as Error).name === 'AbortError') setLast(m => ({ ...m, stopped: true, steps: [...steps] }))
       else setErr(friendly(e))
@@ -992,6 +1170,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
                 {m.steps?.length ? <Steps steps={m.steps} live={busy && i === last} /> : null}
+                {m.trace && !busy && <button className="flow-save" onClick={() => { const tr = m.trace; update(c => ({ ...c, messages: c.messages.map((x, j) => j === i ? { ...x, trace: undefined } : x) })); send(undefined, `把刚才这次操作整理成一个 Flow，用 flow_save 保存。去掉多余和失败的步骤，会变的内容（搜索词、地址、商品名等）改成 {参数}，付款或提交、发送的步骤加 confirm。实际执行过的步骤：\n${JSON.stringify(tr)}`) }}>
+                  <Icon n="bolt" s={15} w={2} />存成 Flow，下次一键运行</button>}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : char ? <RpView src={runRegex(m.content, char, 'ai', 'display', rpUser)} streaming={busy && i === last} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
                   {busy && i === last && !m.media && !m.content && !m.reasoning && <span className="caret" />}</div>
                 {gi >= 0 && i === 0 && greets.length > 1 && <div className="swipe"><button onClick={() => swipe(-1)} aria-label="上一个开场"><Icon n="left" s={16} w={2.2} /></button>

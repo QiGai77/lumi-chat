@@ -60,7 +60,7 @@ export interface Media { kind: 'image' | 'video'; id: string; prompt: string; st
 export interface Step { name: string; label: string; args: Record<string, unknown>; result?: string; ok?: boolean }
 export interface ToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
 export type ApiMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: ToolCall[]; tool_call_id?: string; reasoning_content?: string }
-export interface Msg { role: 'user' | 'assistant'; content: string; steps?: Step[]; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
+export interface Msg { role: 'user' | 'assistant'; content: string; steps?: Step[]; trace?: import('./flow').FlowStep[]; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
 
 export async function streamChat(opts: {
   settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string; roleplay?: boolean
