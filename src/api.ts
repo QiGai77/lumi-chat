@@ -51,7 +51,7 @@ export const purchasePage = (s: Settings) => s.purchaseUrl || (gw(s) ? gw(s) + '
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
-export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media }
+export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number }
 
 export async function streamChat(opts: {
   settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string
