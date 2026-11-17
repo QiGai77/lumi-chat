@@ -4,4 +4,6 @@
     <string name="title_activity_main">栖语</string>
     <string name="package_name">tech.qigai.lumi</string>
     <string name="custom_url_scheme">tech.qigai.lumi</string>
+    <string name="a11y_label">栖语 Lumi 手机操控</string>
+    <string name="a11y_desc">打开后，你在栖语 Lumi 里开启「手机操控」时，模型可以读取当前屏幕上的文字和按钮，并替你点击、输入和滑动。不开启手机操控时不会读取任何内容。</string>
 </resources>
