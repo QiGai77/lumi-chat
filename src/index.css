@@ -292,3 +292,43 @@ input,textarea{font:inherit;color:inherit;border:0;outline:0;background:none}
 .mini-seg button{padding:5px 14px;border-radius:99px;font-size:14px;font-weight:600;color:var(--label2)}
 .mini-seg button.on{background:#fff;color:var(--ink);box-shadow:0 2px 6px rgba(0,0,0,.1)}
 button.row{width:100%;text-align:left}
+
+/* ======================= v0.8 models + membership ======================= */
+.el{position:relative;display:inline-grid;place-items:center;flex:none;border-radius:28%;color:#fff;font-weight:700;letter-spacing:-.3px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 10px rgba(120,60,30,.18);font-family:var(--serif)}
+.el i{position:absolute;left:14%;top:8%;font-style:normal;font-weight:600;opacity:.85;font-family:var(--mono)}
+.nav-sub .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.models{display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
+.model{display:flex;align-items:center;gap:12px;padding:12px;border-radius:22px;background:rgba(255,255,255,.55);border:1.5px solid transparent;text-align:left;
+  transition:transform .35s var(--spring),border-color .2s,background .2s}
+.model:active{transform:scale(.98)}
+.model.on{border-color:var(--accent);background:rgba(255,255,255,.9);box-shadow:0 8px 20px rgba(224,88,62,.15)}
+.iq{display:flex;gap:3px}.iq b{width:6px;height:16px;border-radius:3px;background:rgba(20,26,38,.1)}.iq b.on{background:var(--accent)}
+.key-link{padding:8px 20px 0;font-size:14px}
+.key-link a{color:#0a84ff;font-weight:600;text-decoration:underline;text-underline-offset:3px;display:inline-flex;align-items:center;gap:3px}
+.key-link a svg{transform:rotate(45deg)}
+.adv-toggle{display:block;margin:22px auto 0;font-size:14px;color:var(--label2)}
+.w-amt{font-family:var(--serif);font-weight:600;letter-spacing:-.5px}
+.w-meter{position:relative;height:6px;border-radius:99px;background:rgba(255,255,255,.28);margin-top:10px;overflow:hidden}
+.w-meter div{height:100%;border-radius:inherit;background:#fff;animation:grow-x .9s var(--spring) both;transform-origin:left}
+.w-card.plan-max{background:linear-gradient(135deg,#ff9a6b 0%,#e0583e 40%,#7a2a5c 100%)}
+.w-card.plan-ultra{background:linear-gradient(135deg,#3a2c5e 0%,#1d1a2e 55%,#0a0c18 100%)}
+.w-card.plan-ultra .w-card-glow{background:radial-gradient(40% 40% at 80% 20%,rgba(154,134,255,.55),transparent 60%),radial-gradient(35% 45% at 10% 90%,rgba(224,88,62,.35),transparent 60%)}
+.w-card.plan-none{background:linear-gradient(135deg,#d9c4b8,#b39888 60%,#8e7466)}
+.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.plan-card{position:relative;border-radius:24px;padding:14px 12px 12px;background:var(--card);border:1px solid var(--card-line);box-shadow:var(--warm-shadow);display:flex;flex-direction:column;gap:6px;min-width:0}
+.plan-card.max{background:linear-gradient(180deg,#fff,#fff2ea);border:1.5px solid rgba(224,88,62,.55)}
+.plan-card.ultra{background:linear-gradient(160deg,#2a2240,#121222);color:#f5efe9;border-color:rgba(255,255,255,.08)}
+.plan-card.cur{outline:2px solid var(--accent);outline-offset:2px}
+.plan-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.plan-name{font-family:var(--serif);font-size:19px;font-weight:600}
+.plan-tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--accent);color:#fff}.plan-tag.cur{background:#34C759}
+.plan-price{font-size:26px;font-weight:700;letter-spacing:-.8px}.plan-price small{font-size:14px;margin-right:1px}.plan-price span{font-size:11px;font-weight:500;color:var(--label2);margin-left:3px}
+.ultra .plan-price span{color:rgba(245,239,233,.6)}
+.plan-card ul{list-style:none;padding:0;margin:0 0 4px;display:flex;flex-direction:column;gap:4px;font-size:11.5px;line-height:1.35;color:var(--label2);flex:1}
+.ultra ul{color:rgba(245,239,233,.75)}
+.plan-card li{display:flex;gap:4px;align-items:flex-start}.plan-card li svg{flex:none;margin-top:1px;color:var(--accent)}.ultra li svg{color:#b8a8ff}
+.plan-btn{height:34px;border-radius:99px;font-size:14px;font-weight:600;background:rgba(224,88,62,.1);color:var(--accent);transition:transform .3s var(--spring)}
+.max .plan-btn{background:var(--accent);color:#fff;box-shadow:0 6px 14px rgba(224,88,62,.3)}
+.ultra .plan-btn{background:#fff;color:#1d1a2e}
+.plan-btn:active{transform:scale(.95)}

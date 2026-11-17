@@ -1,17 +1,25 @@
-export type Tier = 'eco' | 'fast'
+/** The only three models the app exposes. The gateway (Sub2API composite group) maps each to a real upstream model. */
+export type Tier = 'helium' | 'neon' | 'argon'
+export const MODELS: { id: Tier; name: string; desc: string; iq: number }[] = [
+  { id: 'helium', name: 'Helium', desc: '轻快 · 日常问答、翻译、总结', iq: 1 },
+  { id: 'neon', name: 'Neon', desc: '均衡 · 写作、代码、分析', iq: 2 },
+  { id: 'argon', name: 'Argon', desc: '最强 · 复杂推理、长任务', iq: 3 },
+]
+export const MODEL_NAME: Record<Tier, string> = { helium: 'Helium', neon: 'Neon', argon: 'Argon' }
+export const PLANS = [
+  { id: 'Pro', price: 50, perks: ['Helium、Neon、Argon 全部可用', '日常用量'] },
+  { id: 'Max', price: 100, perks: ['约 Pro 2.5 倍用量', '高峰优先'] },
+  { id: 'Ultra', price: 200, perks: ['约 Pro 6 倍用量', 'Argon 长任务优先'] },
+]
+
 export interface Settings {
-  baseUrl: string        // OpenAI-compatible endpoint, e.g. your Sub2API gateway
-  ecoKey: string         // key bound to the economy group
-  fastKey: string        // key bound to the fast group (can equal ecoKey)
-  ecoModel: string
-  fastModel: string
-  thinkModel: string     // used when 深度思考 is on
-  ecoPrice: number       // ¥ per 1M output tokens shown in the app (estimate only)
-  fastPrice: number
-  rechargeUrl: string
-  genUI: boolean         // let the model answer with lumi-ui cards
-  mediaBaseUrl: string   // image / video endpoint (OpenAI-compatible); empty = same as baseUrl
-  mediaKey: string       // empty = eco key
+  baseUrl: string        // Sub2API gateway
+  apiKey: string
+  keyUrl: string         // where 获取密钥 goes; empty = {baseUrl}/keys
+  purchaseUrl: string    // where 订阅 goes; empty = {baseUrl}/purchase
+  genUI: boolean
+  mediaBaseUrl: string
+  mediaKey: string
   imageModel: string
   imageSize: string
   videoModel: string
@@ -19,11 +27,7 @@ export interface Settings {
   theme: 'peach' | 'wallpaper'
 }
 export const defaultSettings: Settings = {
-  baseUrl: 'https://api.deepseek.com',
-  ecoKey: '', fastKey: '',
-  ecoModel: 'deepseek-chat', fastModel: 'deepseek-chat', thinkModel: 'deepseek-reasoner',
-  ecoPrice: 4, fastPrice: 12,
-  rechargeUrl: '',
+  baseUrl: '', apiKey: '', keyUrl: '', purchaseUrl: '',
   genUI: true,
   mediaBaseUrl: '', mediaKey: '',
   imageModel: 'gpt-image-1', imageSize: '1024x1024',
@@ -32,8 +36,18 @@ export const defaultSettings: Settings = {
 }
 const SK = 'lumi.settings'
 export function loadSettings(): Settings {
-  try { return { ...defaultSettings, ...JSON.parse(localStorage.getItem(SK) || '{}') } } catch { return defaultSettings }
+  try {
+    const raw = JSON.parse(localStorage.getItem(SK) || '{}')
+    if (!raw.apiKey && (raw.ecoKey || raw.fastKey)) raw.apiKey = raw.ecoKey || raw.fastKey // v0.7 → v0.8
+    if (raw.baseUrl === 'https://api.deepseek.com') raw.baseUrl = ''
+    const s: Record<string, unknown> = { ...defaultSettings }
+    for (const k of Object.keys(defaultSettings)) if (k in raw) s[k] = raw[k]
+    return s as unknown as Settings
+  } catch { return defaultSettings }
 }
+export const gw = (s: Settings) => s.baseUrl.trim().replace(/\/+$/, '')
+export const keyPage = (s: Settings) => s.keyUrl || (gw(s) ? gw(s) + '/keys' : '')
+export const purchasePage = (s: Settings) => s.purchaseUrl || (gw(s) ? gw(s) + '/purchase' : '')
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
@@ -44,16 +58,18 @@ export async function streamChat(opts: {
   onDelta: (text: string, reasoning: string) => void
 }): Promise<{ promptTokens: number; completionTokens: number; firstTokenMs: number }> {
   const { settings: s, tier, think } = opts
-  const key = tier === 'fast' ? (s.fastKey || s.ecoKey) : (s.ecoKey || s.fastKey)
+  const key = s.apiKey
+  if (!gw(s)) throw new Error('还没有填写网关地址，请到「设置」里填写。')
   if (!key) throw new Error('还没有填写 API Key，请到「设置」里填写。')
-  const model = think ? s.thinkModel : tier === 'fast' ? s.fastModel : s.ecoModel
+  const model = tier
   const t0 = performance.now()
   let first = 0
-  const res = await fetch(s.baseUrl.replace(/\/+$/, '') + '/v1/chat/completions', {
+  const res = await fetch(gw(s) + '/v1/chat/completions', {
     method: 'POST', signal: opts.signal,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model, stream: true, stream_options: { include_usage: true },
+      ...(think ? { reasoning_effort: 'high' } : {}),
       messages: [
         ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
         ...opts.messages.filter(m => !m.media).map(m => ({ role: m.role, content: m.content })),
@@ -96,7 +112,7 @@ export async function streamChat(opts: {
 
 const root = (s: Settings) => (s.mediaBaseUrl || s.baseUrl).replace(/\/+$/, '') + '/v1'
 const mkey = (s: Settings) => {
-  const k = s.mediaKey || s.ecoKey || s.fastKey
+  const k = s.mediaKey || s.apiKey
   if (!k) throw new Error('还没有填写 API Key，请到「设置」里填写。')
   return k
 }
@@ -147,4 +163,21 @@ export async function generateVideo(s: Settings, prompt: string, signal: AbortSi
   const c = await fetch(`${root(s)}/videos/${id}/content`, { headers: h, signal })
   if (!c.ok) await fail(c)
   return { blob: await c.blob() }
+}
+
+export interface GatewayUsage {
+  planName?: string
+  mode?: string
+  remaining?: number
+  balance?: number
+  subscription?: { daily_usage_usd: number; weekly_usage_usd: number; monthly_usage_usd: number; daily_limit_usd?: number | null; weekly_limit_usd?: number | null; monthly_limit_usd?: number | null; expires_at?: string }
+  daily_usage?: { date: string; requests: number; total_tokens: number; cost: number; actual_cost: number }[]
+}
+/** Sub2API GET /v1/usage — plan, limits and per-day usage for this API key. */
+export async function fetchUsage(s: Settings, signal?: AbortSignal): Promise<GatewayUsage> {
+  if (!gw(s) || !s.apiKey) throw new Error('未配置网关')
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const res = await fetch(`${gw(s)}/v1/usage?days=14&timezone=${encodeURIComponent(tz)}`, { headers: { Authorization: `Bearer ${s.apiKey}` }, signal })
+  if (!res.ok) await fail(res)
+  return await res.json()
 }
