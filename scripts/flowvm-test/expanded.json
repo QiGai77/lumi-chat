@@ -1,0 +1,204 @@
+[
+ {
+  "name": "类：购物车两次 add 后结算",
+  "steps": [
+   {
+    "kind": "new",
+    "var": "c",
+    "cls": "Cart",
+    "args": {
+     "shop": "'饿了么'"
+    },
+    "_i": 0,
+    "_fid": "shop",
+    "fields": {
+     "count": "0",
+     "shop": "'美团'"
+    }
+   },
+   {
+    "kind": "bind",
+    "var": "c",
+    "cls": "Cart",
+    "method": "add",
+    "args": {
+     "item": "'奶茶'"
+    },
+    "_i": 1,
+    "_fid": "shop"
+   },
+   {
+    "kind": "input",
+    "text": "${this.shop}:${item}",
+    "_i": 0,
+    "_fid": "shop::Cart.add"
+   },
+   {
+    "kind": "set",
+    "var": "this.count",
+    "value": "this.count + 1",
+    "_i": 1,
+    "_fid": "shop::Cart.add"
+   },
+   {
+    "kind": "unbind",
+    "_i": 1,
+    "_fid": "shop"
+   },
+   {
+    "kind": "bind",
+    "var": "c",
+    "cls": "Cart",
+    "method": "add",
+    "args": {
+     "item": "'面包'"
+    },
+    "_i": 2,
+    "_fid": "shop"
+   },
+   {
+    "kind": "input",
+    "text": "${this.shop}:${item}",
+    "_i": 0,
+    "_fid": "shop::Cart.add"
+   },
+   {
+    "kind": "set",
+    "var": "this.count",
+    "value": "this.count + 1",
+    "_i": 1,
+    "_fid": "shop::Cart.add"
+   },
+   {
+    "kind": "unbind",
+    "_i": 2,
+    "_fid": "shop"
+   },
+   {
+    "kind": "if",
+    "cond": {
+     "kind": "var",
+     "var": "c.count",
+     "op": "==",
+     "value": "2"
+    },
+    "_i": 3,
+    "_fid": "shop"
+   },
+   {
+    "kind": "tap",
+    "sel": {
+     "text": "结算${c.count}"
+    },
+    "_i": 4,
+    "_fid": "shop"
+   },
+   {
+    "kind": "endif",
+    "_i": 5,
+    "_fid": "shop"
+   }
+  ],
+  "expect": [
+   "input:饿了么:奶茶",
+   "input:饿了么:面包",
+   "tap:结算2"
+  ]
+ },
+ {
+  "name": "call 子流程 + for",
+  "steps": [
+   {
+    "kind": "for",
+    "var": "i",
+    "from": 1,
+    "to": 2
+   },
+   {
+    "kind": "tap",
+    "sel": {
+     "text": "去支付"
+    },
+    "confirm": true,
+    "_i": 0,
+    "_fid": "pay"
+   },
+   {
+    "kind": "endfor"
+   }
+  ],
+  "expect": [
+   "tap:去支付",
+   "tap:去支付"
+  ]
+ },
+ {
+  "name": "do-while 翻页（v0.16 校验会拒绝）",
+  "steps": [
+   {
+    "kind": "do"
+   },
+   {
+    "kind": "tap",
+    "sel": {
+     "text": "下一页"
+    }
+   },
+   {
+    "kind": "dowhile",
+    "cond": {
+     "kind": "exists",
+     "sel": {
+      "text": "下一页"
+     }
+    }
+   }
+  ],
+  "screen": [
+   "下一页"
+  ],
+  "pagesLeft": 3,
+  "expect": [
+   "tap:下一页",
+   "tap:下一页",
+   "tap:下一页"
+  ]
+ },
+ {
+  "name": "point 字段运算后点击",
+  "steps": [
+   {
+    "kind": "set",
+    "var": "p",
+    "value": "0.2,0.4"
+   },
+   {
+    "kind": "set",
+    "var": "p.x",
+    "value": "p.x * 2"
+   },
+   {
+    "kind": "tap",
+    "pointVar": "p"
+   }
+  ],
+  "expect": [
+   "tap@0.4,0.4"
+  ]
+ },
+ {
+  "name": "初始变量 + 参数填充",
+  "steps": [
+   {
+    "kind": "input",
+    "text": "露营 ${who}"
+   }
+  ],
+  "vars": {
+   "who": "小明"
+  },
+  "expect": [
+   "input:露营 小明"
+  ]
+ }
+]

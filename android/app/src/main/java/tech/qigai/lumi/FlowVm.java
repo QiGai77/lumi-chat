@@ -449,6 +449,7 @@ public class FlowVm {
     private static final Pattern INTERP = Pattern.compile("\\$\\{(" + PATH + ")\\}");
     private static final Pattern PATH_RE = Pattern.compile(PATH);
     private static final Pattern NUM = Pattern.compile("-?\\d+(\\.\\d+)?");
+    private static final Pattern QUOTED = Pattern.compile("^([\"'])([^\"']*)\\1$");
     private static final Pattern POINT = Pattern.compile("^(-?\\d+(?:\\.\\d+)?)\\s*,\\s*(-?\\d+(?:\\.\\d+)?)$");
 
     /** 读路径：a / a.b.c / this.x；数组可以用数字下标 a.0（下标写成字段）。读不到返回 null。 */
@@ -519,6 +520,8 @@ public class FlowVm {
             try { JSONObject o = new JSONObject(); o.put("x", Double.parseDouble(pt.group(1))); o.put("y", Double.parseDouble(pt.group(2))); return o; } catch (Exception ignored) { }
         }
         if (NUM.matcher(t).matches()) return Double.parseDouble(t);
+        Matcher lit = QUOTED.matcher(t);
+        if (lit.matches()) return lit.group(2); // 单个引号字符串 'abc' → abc
         if (t.contains(".") && t.matches(PATH)) {
             Object v = resolvePath(t);
             if (v != null) return copy(v);
