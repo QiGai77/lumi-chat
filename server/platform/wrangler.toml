@@ -1,0 +1,5 @@
+name = "lumi-platform"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+routes = [{ pattern = "platform.qigai.tech", custom_domain = true }]
+# 无需任何 secret：本站是静态官网前门，不发 key、不收钱。

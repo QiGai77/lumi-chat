@@ -32,6 +32,11 @@ export default function App() {
   const [view, setView] = useState<View>('home')
   const wide = () => window.innerWidth >= 980
   const [side, setSide] = useState(wide)
+  const [mini, setMini] = useState(() => localStorage.getItem('lumi.sideMini') === '1')
+  const toggleMini = () => {
+    if (window.innerWidth < 980) { setSide(false); return } // 手机端 mini 不生效，仍是关闭抽屉
+    setMini(m => { const n = !m; localStorage.setItem('lumi.sideMini', n ? '1' : '0'); return n })
+  }
   const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
   const [projects, setProjects] = useState<Project[]>(loadProjects)
@@ -127,10 +132,10 @@ export default function App() {
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${side && mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} onClose={() => setSide(false)} />
+        plan={plan} mini={mini} onToggleMini={toggleMini} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
@@ -174,18 +179,30 @@ export default function App() {
 }
 
 /* ---------------- sidebar (ChatGPT 式) */
-function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClose }: {
+function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini, onToggleMini }: {
   view: View; go: (v: View) => void; convs: Conv[]; openId: string | null; onOpen: (id: string) => void; onNew: () => void
-  onDelete: (id: string) => void; plan: string | null; onClose: () => void
+  onDelete: (id: string) => void; plan: string | null; mini: boolean; onToggleMini: () => void
 }) {
   const [q, setQ] = useState('')
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
   const item = (v: View, icon: string, label: string, tone: string) => (
-    <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) || (v === 'flows' && view.startsWith('flow')) ? 'on' : ''}`} onClick={() => go(v)}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
+    <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) || (v === 'flows' && view.startsWith('flow')) ? 'on' : ''}`} onClick={() => go(v)} title={label}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
+  if (mini) {
+    return (
+      <aside className="side">
+        <div className="s-head">
+          <button className="side-btn" onClick={onToggleMini} aria-label="展开侧栏" title="展开侧栏"><Icon n="side" s={22} w={1.9} /></button>
+        </div>
+        <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新建对话"><GlassIcon n="compose" tone="coral" s={30} /></button>
+        <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能"><GlassIcon n="spark" tone="plum" s={30} /></button>
+        <button className={`s-item ${view === 'mcp' ? 'on' : ''}`} onClick={() => go('mcp')} title="MCP"><GlassIcon n="plug" tone="sky" s={30} /></button>
+      </aside>
+    )
+  }
   return (
     <aside className="side">
       <div className="s-head">
-        <button className="side-btn" onClick={onClose} aria-label="收起侧栏"><Icon n="side" s={22} w={1.9} /></button>
+        <button className="side-btn" onClick={onToggleMini} aria-label="折叠侧栏" title="折叠成图标栏"><Icon n="side" s={22} w={1.9} /></button>
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
       <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
@@ -685,7 +702,7 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
       {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
-        <div className="fe-stack"><span style={{ background: 'linear-gradient(150deg,#ff6a5a,#e0583e)' }} /><span style={{ background: 'linear-gradient(150deg,#ffc35a,#f59e2c)' }} /><span style={{ background: 'linear-gradient(150deg,#7b8cff,#5a63e6)' }} /></div>
+        <div className="fe-stack"><span style={{ background: 'linear-gradient(150deg,#FFE3D3,#FFC9A8)' }} /><span style={{ background: 'linear-gradient(150deg,#DCEEFF,#B7DBFF)' }} /><span style={{ background: 'linear-gradient(150deg,#E7E0FF,#CFC2FF)' }} /></div>
         <div className="t18 b">把常用操作存成一张卡</div>
         <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
       </div> : <div className="fapp-grid">
@@ -722,7 +739,7 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   useRecordReturn(go, setMsg)
   const run = async (f: Flow, vals: Record<string, string> = {}) => {
     setAsk(null); setRunning(f.id); setMsg('')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `「${f.name}」完成，${r.done} 步` : `「${f.name}」卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`) }
+    try { const r = await runFlow(f, vals); setMsg(r.ok ? `「${f.name}」完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `「${f.name}」卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`) }
     catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
   }
   const total = flows.reduce((n, f) => n + f.runs, 0)
@@ -751,7 +768,7 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   )
 }
 
-const kindIcon: Record<string, string> = { tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass' }
+const kindIcon: Record<string, string> = { tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', if: 'code', while: 'clock', do: 'play', for: 'list', set: 'pen', call: 'bolt', break: 'x', continue: 'right', else: 'down', endif: 'check', endwhile: 'check', dowhile: 'check', endfor: 'check' }
 
 const ADD_STEPS: { label: string; s: FlowStep }[] = [
   { label: '回车 / 搜索', s: { kind: 'enter' } },
@@ -786,6 +803,8 @@ function FlowEdit({ id, settings, done }: { id: string; settings: Settings; done
 - 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
 - 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
 - 付款、提交订单、发送、删除这类步骤加 confirm:true
+- 允许用 if/else/while/do-while/for/set/call 等逻辑节点代替重复步骤；循环必须有明确退出条件（cond 或 for 的 from/to），单循环默认最多 20 次
+- 禁止编造不存在的选择器；只用录制/屏幕上真实出现的 id、文字或坐标
 - 每步可以写一个简短中文 note 说明`,
         messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}` }],
         onDelta: t => { out = t } })
@@ -798,7 +817,7 @@ function FlowEdit({ id, settings, done }: { id: string; settings: Settings; done
     const vals: Record<string, string> = {}
     for (const p of f.params) { const v = prompt(`试运行 · ${p}`); if (v == null) return; vals[p] = v }
     setMsg('运行中…')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `完成，${r.done} 步` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`); if (!r.ok && r.failedAt != null) setOpen(r.failedAt) }
+    try { const r = await runFlow(f, vals); setMsg(r.ok ? `完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`); if (!r.ok && r.failedAt != null) setOpen(r.failedAt) }
     catch (e) { setMsg((e as Error).message) }
   }
   const S = draft || f
@@ -864,7 +883,7 @@ const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替�
 2. 打开应用用 phone_open_app；返回、回主屏用 phone_key。
 3. phone_shell 是 ADB 命令，只在用户已连接 ADB 且确实需要时用（比如查电量 dumpsys battery、截屏 screencap）。不要执行删除数据、卸载应用、改系统设置之类的危险命令，除非用户明确要求。
 4. 涉及付款、发消息给别人、删除内容等不可撤回的操作，执行前先停下来问用户确认。
-5. 如果用户的请求和某个已保存的 Flow 对得上，优先 flow_run（填好参数），比一步步操作快；Flow 失败时会告诉你卡在哪，你接着手动做完，再问用户要不要用 flow_save 修好它。
+5. 如果用户的请求和某个已保存的 Flow 对得上，优先 flow_run（填好参数），比一步步操作快；Flow 失败时会告诉你卡在哪，你接着手动做完，再问用户要不要用 flow_save 修好它。Flow 找不到元素时先用 phone_screen 看清再手动完成，完成后再问用户要不要把新选择器存回 Flow（不要每次都走视觉：AI 视觉每步都要一次模型往返，比原生 Flow 慢，只做首跑发现，缓存的选择器下次直接原生跑）。
 6. 用户让你新建或优化 Flow 时，用 flow_save；选择器优先用 phone_screen 里看到的文字。
 7. 做完后用一两句话告诉用户结果。`
 
@@ -1441,7 +1460,7 @@ function Wallet({ settings, gu, onSettings }: { settings: Settings; gu: GatewayU
           <div key={d.day} className="row"><span className="ico"><Icon n="chat" s={16} w={2} /></span>
             <div className="grow"><div className="t15">{d.day}</div><div className="t12">{d.requests ? `${d.requests} 次请求` : '对话'}</div></div><b className="t15">{d.tokens.toLocaleString()}<small className="t12"> tokens</small></b></div>))}
         </div>)}
-      <div className="t12 foot">订阅与支付在网关的用户中心完成，额度以网关为准</div>
+      <div className="t12 foot">订阅与支付在 platform.qigai.tech 完成，额度以网关为准</div>
     </section>
   )
 }
@@ -1516,9 +1535,9 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="list">{f('mediaBaseUrl', '地址', 'link', '留空则同网关')}{f('mediaKey', 'Key', 'key', '留空则同上', 'password')}
           {f('imageModel', '图片模型', 'image')}{f('imageSize', '图片尺寸', 'image', '1024x1024')}{f('videoModel', '视频模型', 'film')}{f('videoSeconds', '视频秒数', 'film', '4', 'number')}</div>
         <div className="sec">页面地址</div>
-        <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 网关/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 网关/purchase')}</div>
+        <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.11 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.16 · 开源 MIT</div>
     </section>
   )
 }

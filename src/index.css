@@ -695,3 +695,25 @@ q-rp{color:#b8452f;font-weight:500}
 .flow-steps.tl li.open .tl-card{box-shadow:var(--warm-shadow)}
 .flow-steps.tl li.ghost .tl-card{background:rgba(155,130,255,.07);border-style:dashed}
 .flow-steps.tl .fs-n{display:none}
+
+/* ---------- v0.16 浅色 Flow 卡片 + 迷你侧栏 */
+/* 卡片底色已是浅色双色（appicon.ts tint），这里把文字与徽标改成深色墨字、淡阴影。 */
+.fapp,.fhero,.ftile{color:#23272F}
+.fapp::before,.fhero::before,.ftile::before{background:radial-gradient(120% 70% at 15% 0%,rgba(255,255,255,.18),transparent 60%)}
+.fapp::after{box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(35,39,47,.06)}
+.fa-n{background:rgba(20,26,38,.08);color:#23272F;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+.fa-name{text-shadow:none}
+.fa-chips span{background:rgba(20,26,38,.08);color:#23272F}
+.fh-rec{background:rgba(255,255,255,.85);color:#23272F;box-shadow:0 6px 16px rgba(35,39,47,.1)}
+.ft-glyph{background:rgba(20,26,38,.08);color:#23272F;box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
+.ft-more{background:rgba(20,26,38,.08);color:#23272F}
+.fa-ring,.fh-ring{background:rgba(255,255,255,.65);box-shadow:0 6px 16px rgba(35,39,47,.1)}
+.app-ic.ph{color:#23272F}
+.fe-stack span{box-shadow:0 10px 24px -10px rgba(35,39,47,.18),inset 0 1px 0 rgba(255,255,255,.5)}
+/* 迷你侧栏：桌面（≥980px）才生效，手机端抽屉仍全宽。 */
+@media (min-width:980px){
+  .side-mini .side{width:76px;padding-left:10px;padding-right:10px}
+  .side-mini .main{left:76px}
+  .side-mini .side .s-item{justify-content:center;padding:0}
+  .side-mini .side .s-head{justify-content:center}
+}

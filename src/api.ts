@@ -30,6 +30,8 @@ export interface Settings {
 }
 /** 内置网关的公开客户端密钥：装好就能用，服务端按 IP 限流。 */
 export const APP_KEY = 'lumi-app-7f3c9a2e'
+/** 官网平台：获取 API Key、升级会员、提交反馈都在这里完成。 */
+export const PLATFORM_URL = 'https://platform.qigai.tech'
 
 export const defaultSettings: Settings = {
   baseUrl: 'https://api.qigai.tech', apiKey: APP_KEY, keyUrl: '', purchaseUrl: '',
@@ -52,8 +54,8 @@ export function loadSettings(): Settings {
   } catch { return defaultSettings }
 }
 export const gw = (s: Settings) => s.baseUrl.trim().replace(/\/+$/, '')
-export const keyPage = (s: Settings) => s.keyUrl || (gw(s) ? gw(s) + '/keys' : '')
-export const purchasePage = (s: Settings) => s.purchaseUrl || (gw(s) ? gw(s) + '/purchase' : '')
+export const keyPage = (s: Settings) => s.keyUrl || PLATFORM_URL + '/keys'
+export const purchasePage = (s: Settings) => s.purchaseUrl || PLATFORM_URL + '/upgrade'
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
