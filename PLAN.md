@@ -1,5 +1,22 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.17（2026-11-18，分支 v017-flow，未 push）
+用户：以 Flow 为主的新版本；官网 platform.qigai.tech（/keys 获取 Key、/upgrade 升级会员、/feedback 反馈），App 内入口都指过去；Flow 逻辑（if/else、for、while、do-while）验证端到端可用并修 bug，加 point / struct / class（字段 + 方法，方法体是子流程，new 实例化，obj.field，obj.method() 绑定 this）；AI 视觉步明显变快（目标约 1 秒一步）；Flow 卡片配色重做；侧栏可折叠，手机也要。
+
+- **解释器拆分**：`android/.../FlowVm.java` 纯 Java（只依赖 org.json），LumiFlow 实现 `FlowVm.Host` 做真机动作。新增控制步 `new`、`bind`/`unbind`（方法调用），路径读写 `a.b.c`、`this.x`，`${路径}` 插值。`src/flowcore.ts` 是 TS 侧纯逻辑（类型、evalValue/evalVarCond、validateFlow/validateClasses、expandCalls、fill、applyLearned），`flow.ts` 只留存储、原生运行、视觉桥和模型工具。
+- **修掉的 v0.16 bug**（都有测试）：`validateFlow` 对 dowhile 不出栈，任何 do-while Flow 都校验失败；for 区间超过 20 次被默认循环上限误判失败（for 默认上限改为区间长度，最多 1000）；`Flow.vars` 初始变量没传给原生；动作步（输入文字、按钮文字）里的 `${变量}` 原生不替换；`continue` 跳过了循环尾部的计数；嵌套上限把 if 也算进去；`'3f'`、`NaN` 这类被 Java parseDouble 当数字；单个引号字符串 `'abc'` 不去引号（TS→Java 端到端测试发现）。
+- **类**：`Flow.classes: [{name, fields:{字段:默认值表达式}, methods:[{name, params?, steps | flowId}]}]`。`new{var, cls, args?}`；`method{var, method, args?, cls?}` 由 `expandCalls` 展开成 `bind{var, cls, method, args}` + 方法体 + `unbind`（运行时 this 绑定到对象引用，实参在调用方作用域求值，unbind 时恢复同名变量）。递归 / 超过 3 层 / 找不到时保留原步，原生报错停下。类型不匹配（对象不是该类）原生报错。`validateClasses` 校验类名、字段名、方法体（this 只能在方法里用）。
+- **AI 视觉**（`ai{goal, act: tap|long|input, text?}`，以及 `tap` 上 `vision:true` 作兜底）：缓存的 `sel` 命中 → 原生，不调模型（结果标「缓存」）。未命中 → 截图（`takeScreenshot`，Android 11+，长边 720px、JPEG q60，下一步是 ai 时与步后等待并行预取）+ `dump(60)` 元素列表 → `flowVision` 事件 → JS `vision.ts` 用 Helium 非流式请求（不发 reasoning_effort ⇒ 网关 thinking disabled，max_tokens 40，temperature 0，只要 `{"i":n}` / `{"x","y"}` / `{"none":true}`），`flowVisionAnswer` 回传；元素编号直接拿节点，选择器记进 `learned`，`applyLearned` 写回 Flow（带 `{参数}` 的步不写回）。上游 4xx 拒收图片时本次会话改为只发元素列表。a11y 配置加 `canTakeScreenshot`。
+- **每步耗时**：FlowVm 结果带 `trace[{pc, i, fid, label, ms, src}]`（src：native/cache/vision/coord/logic/skip/fail）、`visionMs`、`visionCalls`；编辑页「试运行」和应用页运行后显示运行明细面板，点一行定位到那一步。Flow 卡显示上次耗时。
+- **编辑器**（`src/flowui.tsx`）：时间线按块缩进、按类别着色（逻辑紫、变量蓝、类青、AI 琥珀）；添加步骤弹窗分组（基础 / AI 视觉 / 逻辑 / 变量 / 类与子流程），块成对插入到当前展开步之后；条件编辑（出现 / 没有 / 屏幕包含 / 变量比较）；for、set、call、new、method（参数表）、ai 的专用表单；类编辑弹窗（字段、方法、方法体选 Flow 或写步骤 JSON）；实时校验（错误阻止试运行，警告只提示）；快速模式开关。AI 优化提示词允许把不稳定的点击换成 ai 步。
+- **卡片**：`tint()` 改为 8 个饱和色族（珊瑚/琥珀/绿/青/蓝/靛/紫/玫）+ 石墨（低饱和图标），CSS mesh gradient + 底部黑纱 + SVG 颗粒，白字；文字区 deep 色对白字对比度 5.8–10.9:1（脚本算过）。应用卡、应用头图、Flow 卡、编辑页头卡统一。素材全部自绘，README 写明 CC0。
+- **侧栏**：折叠态手机和桌面都生效（`lumi.sideMini`），图标栏只有 新对话 / 技能 / MCP + 展开按钮，带小字标签。桌面展开回完整侧栏；手机点展开临时拉出完整抽屉盖在图标栏上，选完或点遮罩回到图标栏。修了底部弹窗被侧栏挡住（main 层级）、手机输入卡「深度思考」被挤成竖排（与旧 `.think` 类名冲突）。
+- **官网入口**：`feedbackPage()`；我的：升级会员 → /upgrade（外链）、用量与套餐（App 内）、获取 API Key → /keys、提交反馈 → /feedback；设置新增「会员与帮助」（升级会员、提交反馈、官网）；模式面板「订阅」、侧栏「升级」标签、会员页按钮都外链到 /upgrade。安卓里用系统浏览器打开。
+- **版本**：0.17.0（versionCode 18）。
+- **测试**：`node scripts/flow-test.mts`（33 项）、`scripts/flowvm-test/run.sh`（30 项，含 5 个 TS 展开 → Java 执行的端到端用例）、`python3 scripts/v17_shots.py`（17 张截图 + 横向溢出检查，原生插件是模拟的）。
+- **诚实限制**：没跑 Gradle、没上真机——沙盒是 arm64，Android 的 aapt2 只有 x86-64，Gradle 走不到 javac；改用 JDK 21 的 javac 对 android.jar（API 36）+ 真实依赖 jar（Capacitor 8.6.2、AndroidX、libadb、BouncyCastle）编译全部 Java，通过；解释器逻辑在 JVM 上单测。截图、视觉定位、预取、写回都没在真机验证。AI 视觉每次未命中都要一次模型往返，1 秒不保证；内置网关的 Helium 目前接 DeepSeek，可能不收图片，会自动退回只发元素列表。没有局部作用域：方法里的普通变量是全局的（只有实参会在返回时恢复）；没有 return 值；struct 赋值是复制，对象（new 出来的）是引用。
+- **未做**：push / PR（没有凭据）、真机验证、Gradle 出包、截图里的运行数据是模拟的。
+
 ## v0.16
 - **Flow 逻辑节点**（`src/flow.ts`、`android/.../LumiFlow.java`）：新增 if/else/endif、while/endwhile、do/dowhile、for/endfor、break/continue、set、call；条件 cond（exists/not_exists/text/var，op ==/!=/>/</>=/<=/contains）；变量（string/number/boolean/point/struct，初始变量 `Flow.vars`）；set 支持 `${变量}` 插值、四则、拼接、point 字面量、struct JSON；for 含端点；call 内联子流程（最多 3 层，防循环调用）；tap 可用 `pointVar` 指 point 变量。旧 Flow JSON 向前兼容。`validateFlow`（块配对、空循环、for 缺字段、call 目标不存在、变量未定义警告；循环嵌套 ≤8、单循环默认 ≤20 次可 `max` 覆盖）、`expandCalls`、`stepLabel` 全覆盖；`runFlow` 先校验再展开，`fast` 传给原生；Java 侧 pc 循环解释器 + 控制栈 + 变量表 + 循环保护（单循环超 max 失败、总步数 ≤500 防死循环），每步耗时记 `stepMs`、结果带总 `ms`。
 - **速度与 AI 视觉（诚实口径）**：快的来源是原生无障碍直跑 + 选择器缓存，不是 AI 视觉——视觉（phone_screen + 模型逐步操作）每步都要一次模型往返，比原生 Flow 慢，只做“首跑发现”（找不到元素时定位，找到后把选择器存回 Flow）。目标口径统一为：**快速模式下缓存选择器的步骤目标 ≤1 秒/步**，launch 与页面加载不计入；UI/文档不写“每次执行 1 秒”或“全流程 1 秒”。快速模式（`Flow.fast`）：步后等待 450→120ms、`waitFind` 轮询 350→80ms、tap 默认 timeout 6000→2500ms、launch 不固定睡 1800ms 改为每 100ms 检查窗口根节点变化（最多 1200ms）、input 后聚焦等待 500→150ms。运行成功消息显示总耗时（如 `完成，5 步 · 2.3 秒`）。
