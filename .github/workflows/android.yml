@@ -40,6 +40,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('build-{0}', github.run_number) }}
-          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('栖语 Lumi 测试版 #{0}', github.run_number) }}
+          name: "${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('栖语 Lumi 测试版 {0}', github.run_number) }}"
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           files: lumi-chat.apk
