@@ -24,14 +24,14 @@ const CAT_OF: Partial<Record<FlowStep['kind'], Cat>> = {
   if: 'logic', else: 'logic', endif: 'logic', while: 'logic', endwhile: 'logic', do: 'logic', dowhile: 'logic', for: 'logic', endfor: 'logic',
   break: 'logic', continue: 'logic', call: 'logic', set: 'var', new: 'cls', method: 'cls', bind: 'cls', unbind: 'cls', ai: 'ai',
 }
-export const catOf = (k: FlowStep['kind']): Cat => CAT_OF[k] || 'act'
+const catOf = (k: FlowStep['kind']): Cat => CAT_OF[k] || 'act'
 const CAT_COLOR: Record<Exclude<Cat, 'act'>, { solid: string; soft: string }> = {
   logic: { solid: '#5B47C9', soft: '#ECE8FF' },
   var: { solid: '#2563C9', soft: '#E3EEFF' },
   cls: { solid: '#0E7A66', soft: '#DDF3EE' },
   ai: { solid: '#A2550A', soft: '#FFF0D6' },
 }
-export const kindIcon: Record<string, string> = {
+const kindIcon: Record<string, string> = {
   tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', ai: 'eye',
   if: 'branch', else: 'branch', endif: 'check', while: 'repeat', endwhile: 'check', do: 'repeat', dowhile: 'repeat', for: 'repeat', endfor: 'check',
   set: 'braces', call: 'bolt', break: 'exit', continue: 'right', new: 'cube', method: 'method',

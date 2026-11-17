@@ -13,7 +13,7 @@
 - **侧栏**：折叠态手机和桌面都生效（`lumi.sideMini`），图标栏只有 新对话 / 技能 / MCP + 展开按钮，带小字标签。桌面展开回完整侧栏；手机点展开临时拉出完整抽屉盖在图标栏上，选完或点遮罩回到图标栏。修了底部弹窗被侧栏挡住（main 层级）、手机输入卡「深度思考」被挤成竖排（与旧 `.think` 类名冲突）。
 - **官网入口**：`feedbackPage()`；我的：升级会员 → /upgrade（外链）、用量与套餐（App 内）、获取 API Key → /keys、提交反馈 → /feedback；设置新增「会员与帮助」（升级会员、提交反馈、官网）；模式面板「订阅」、侧栏「升级」标签、会员页按钮都外链到 /upgrade。安卓里用系统浏览器打开。
 - **版本**：0.17.0（versionCode 18）。
-- **测试**：`node scripts/flow-test.mts`（33 项）、`scripts/flowvm-test/run.sh`（30 项，含 5 个 TS 展开 → Java 执行的端到端用例）、`python3 scripts/v17_shots.py`（17 张截图 + 横向溢出检查，原生插件是模拟的）。
+- **测试**：`node scripts/flow-test.mts`（33 项）、`scripts/flowvm-test/run.sh`（30 项，含 5 个 TS 展开 → Java 执行的端到端用例）、`python3 scripts/v17_shots.py`（16 张截图 + 横向溢出检查，原生插件是模拟的）。
 - **诚实限制**：没跑 Gradle、没上真机——沙盒是 arm64，Android 的 aapt2 只有 x86-64，Gradle 走不到 javac；改用 JDK 21 的 javac 对 android.jar（API 36）+ 真实依赖 jar（Capacitor 8.6.2、AndroidX、libadb、BouncyCastle）编译全部 Java，通过；解释器逻辑在 JVM 上单测。截图、视觉定位、预取、写回都没在真机验证。AI 视觉每次未命中都要一次模型往返，1 秒不保证；内置网关的 Helium 目前接 DeepSeek，可能不收图片，会自动退回只发元素列表。没有局部作用域：方法里的普通变量是全局的（只有实参会在返回时恢复）；没有 return 值；struct 赋值是复制，对象（new 出来的）是引用。
 - **未做**：push / PR（没有凭据）、真机验证、Gradle 出包、截图里的运行数据是模拟的。
 
