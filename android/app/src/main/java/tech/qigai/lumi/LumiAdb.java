@@ -28,21 +28,13 @@ import java.util.concurrent.TimeUnit;
 
 import io.github.muntashirakon.adb.AbsAdbConnectionManager;
 import io.github.muntashirakon.adb.AdbStream;
-import sun.security.x509.AlgorithmId;
-import sun.security.x509.CertificateAlgorithmId;
-import sun.security.x509.CertificateExtensions;
-import sun.security.x509.CertificateIssuerName;
-import sun.security.x509.CertificateSerialNumber;
-import sun.security.x509.CertificateSubjectName;
-import sun.security.x509.CertificateValidity;
-import sun.security.x509.CertificateVersion;
-import sun.security.x509.CertificateX509Key;
-import sun.security.x509.KeyIdentifier;
-import sun.security.x509.PrivateKeyUsageExtension;
-import sun.security.x509.SubjectKeyIdentifierExtension;
-import sun.security.x509.X500Name;
-import sun.security.x509.X509CertImpl;
-import sun.security.x509.X509CertInfo;
+import java.math.BigInteger;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 /** 自建 ADB：连接本机的无线调试（或 adb tcpip），无需电脑。密钥存在应用私有目录。 */
 public class LumiAdb extends AbsAdbConnectionManager {
@@ -73,24 +65,11 @@ public class LumiAdb extends AbsAdbConnectionManager {
             KeyPair kp = g.generateKeyPair();
             PublicKey pub = kp.getPublic();
             k = kp.getPrivate();
-            String alg = "SHA512withRSA";
             Date from = new Date(), to = new Date(System.currentTimeMillis() + 3650L * 86400000L);
-            CertificateExtensions ext = new CertificateExtensions();
-            ext.set("SubjectKeyIdentifier", new SubjectKeyIdentifierExtension(new KeyIdentifier(pub).getIdentifier()));
-            ext.set("PrivateKeyUsage", new PrivateKeyUsageExtension(from, to));
             X500Name name = new X500Name("CN=Lumi Chat");
-            X509CertInfo info = new X509CertInfo();
-            info.set("version", new CertificateVersion(2));
-            info.set("serialNumber", new CertificateSerialNumber(new Random().nextInt() & Integer.MAX_VALUE));
-            info.set("algorithmID", new CertificateAlgorithmId(AlgorithmId.get(alg)));
-            info.set("subject", new CertificateSubjectName(name));
-            info.set("key", new CertificateX509Key(pub));
-            info.set("validity", new CertificateValidity(from, to));
-            info.set("issuer", new CertificateIssuerName(name));
-            info.set("extensions", ext);
-            X509CertImpl impl = new X509CertImpl(info);
-            impl.sign(k, alg);
-            ct = impl;
+            X509v3CertificateBuilder bld = new JcaX509v3CertificateBuilder(name, BigInteger.valueOf(new Random().nextInt() & Integer.MAX_VALUE), from, to, name, pub);
+            ContentSigner signer = new JcaContentSignerBuilder("SHA512withRSA").build(k);
+            ct = new JcaX509CertificateConverter().getCertificate(bld.build(signer));
             //noinspection ResultOfMethodCallIgnored
             kf.getParentFile().mkdirs();
             try (FileOutputStream o = new FileOutputStream(kf)) { o.write(k.getEncoded()); }

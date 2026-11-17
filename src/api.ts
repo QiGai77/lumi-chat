@@ -57,12 +57,16 @@ export const purchasePage = (s: Settings) => s.purchaseUrl || (gw(s) ? gw(s) + '
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
-export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
+export interface Step { name: string; label: string; args: Record<string, unknown>; result?: string; ok?: boolean }
+export interface ToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
+export type ApiMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: ToolCall[]; tool_call_id?: string; reasoning_content?: string }
+export interface Msg { role: 'user' | 'assistant'; content: string; steps?: Step[]; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
 
 export async function streamChat(opts: {
   settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string; roleplay?: boolean
+  raw?: ApiMsg[]; tools?: unknown[]
   onDelta: (text: string, reasoning: string) => void
-}): Promise<{ promptTokens: number; completionTokens: number; firstTokenMs: number }> {
+}): Promise<{ promptTokens: number; completionTokens: number; firstTokenMs: number; text: string; reasoning: string; toolCalls: ToolCall[] }> {
   const { settings: s, tier, think } = opts
   const key = s.apiKey
   if (!gw(s)) throw new Error('还没有填写网关地址，请到「设置」里填写。')
@@ -77,9 +81,10 @@ export async function streamChat(opts: {
       model, stream: true, stream_options: { include_usage: true },
       ...(opts.roleplay ? { lumi_mode: 'roleplay', temperature: 1 } : {}),
       ...(think ? { reasoning_effort: 'high' } : {}),
+      ...(opts.tools?.length ? { tools: opts.tools } : {}),
       messages: [
         ...(opts.system ? [{ role: 'system', content: opts.system }] : []),
-        ...opts.messages.filter(m => !m.media).map(m => ({ role: m.role, content: m.content })),
+        ...(opts.raw ?? opts.messages.filter(m => !m.media).map(m => ({ role: m.role, content: m.content }))),
       ],
     }),
   })
@@ -90,6 +95,7 @@ export async function streamChat(opts: {
   const reader = res.body.getReader()
   const dec = new TextDecoder()
   let buf = '', text = '', reasoning = '', pt = 0, ct = 0
+  const calls: ToolCall[] = []
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
@@ -110,11 +116,18 @@ export async function streamChat(opts: {
           reasoning += d.reasoning_content || ''
           opts.onDelta(text, reasoning)
         }
+        for (const tc of d?.tool_calls || []) {
+          const k = tc.index ?? calls.length
+          const c = calls[k] || (calls[k] = { id: '', type: 'function', function: { name: '', arguments: '' } })
+          if (tc.id) c.id = tc.id
+          if (tc.function?.name) c.function.name += tc.function.name
+          if (tc.function?.arguments) c.function.arguments += tc.function.arguments
+        }
         if (j.usage) { pt = j.usage.prompt_tokens || 0; ct = j.usage.completion_tokens || 0 }
       } catch { /* partial line */ }
     }
   }
-  return { promptTokens: pt, completionTokens: ct, firstTokenMs: first }
+  return { promptTokens: pt, completionTokens: ct, firstTokenMs: first, text, reasoning, toolCalls: calls.filter(Boolean).map((c, i) => ({ ...c, id: c.id || `call_${i}` })) }
 }
 
 const root = (s: Settings) => (s.mediaBaseUrl || s.baseUrl).replace(/\/+$/, '') + '/v1'

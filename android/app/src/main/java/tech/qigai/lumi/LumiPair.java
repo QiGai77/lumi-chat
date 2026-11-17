@@ -39,7 +39,7 @@ public class LumiPair extends BroadcastReceiver {
         }
     }
 
-    static void notify(Context c, String title, String text, boolean ask) {
+    static void note(Context c, String title, String text, boolean ask) {
         channel(c);
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(c, CH) : new Notification.Builder(c);
         b.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth).setContentTitle(title).setContentText(text).setOnlyAlertOnce(false).setAutoCancel(!ask);
@@ -79,7 +79,7 @@ public class LumiPair extends BroadcastReceiver {
                         @Override public void onServiceResolved(NsdServiceInfo i) {
                             if (!isLocal(i.getHost())) return;
                             if (pairing) {
-                                if (pairPort != i.getPort()) { pairPort = i.getPort(); notify(c, "找到配对服务（端口 " + pairPort + "）", "下拉通知，点「输入配对码」，填弹窗里的 6 位数字", true); emit("found", String.valueOf(pairPort)); }
+                                if (pairPort != i.getPort()) { pairPort = i.getPort(); note(c, "找到配对服务（端口 " + pairPort + "）", "下拉通知，点「输入配对码」，填弹窗里的 6 位数字", true); emit("found", String.valueOf(pairPort)); }
                             } else connectPort = i.getPort();
                         }
                     });
@@ -96,7 +96,7 @@ public class LumiPair extends BroadcastReceiver {
         pairPort = 0;
         pairL = discover(c, "_adb-tls-pairing._tcp", true);
         connL = discover(c, "_adb-tls-connect._tcp", false);
-        notify(c, "正在等待配对", "打开 开发者选项 → 无线调试 → 使用配对码配对设备", false);
+        note(c, "正在等待配对", "打开 开发者选项 → 无线调试 → 使用配对码配对设备", false);
     }
 
     static synchronized void stop(Context c) {
@@ -115,14 +115,14 @@ public class LumiPair extends BroadcastReceiver {
                 boolean ok = LumiAdb.get(app).pair("127.0.0.1", port, code.trim());
                 if (!ok) throw new Exception("配对码不对或已过期");
                 stop(app);
-                notify(app, "配对成功", "正在连接…", false);
+                note(app, "配对成功", "正在连接…", false);
                 boolean con = false;
                 try { con = LumiAdb.get(app).autoConnect(app, 8000); } catch (Exception ignored) { }
                 if (!con && connectPort > 0) try { con = LumiAdb.get(app).connect("127.0.0.1", connectPort); } catch (Exception ignored) { }
-                notify(app, con ? "已连接 ADB" : "配对成功", con ? "回到栖语 Lumi 就能用了" : "回到栖语 Lumi 点「连接」", false);
+                note(app, con ? "已连接 ADB" : "配对成功", con ? "回到栖语 Lumi 就能用了" : "回到栖语 Lumi 点「连接」", false);
                 emit(con ? "connected" : "paired", "");
             } catch (Throwable e) {
-                notify(app, "配对失败", String.valueOf(e.getMessage()), pairPort > 0);
+                note(app, "配对失败", String.valueOf(e.getMessage()), pairPort > 0);
                 emit("error", String.valueOf(e.getMessage()));
             }
         });
@@ -131,8 +131,8 @@ public class LumiPair extends BroadcastReceiver {
     @Override public void onReceive(Context c, Intent i) {
         Bundle r = RemoteInput.getResultsFromIntent(i);
         CharSequence code = r == null ? null : r.getCharSequence(KEY);
-        if (code == null || pairPort == 0) { notify(c, "没收到配对码", "再试一次", pairPort > 0); return; }
-        notify(c, "正在配对…", "端口 " + pairPort, false);
+        if (code == null || pairPort == 0) { note(c, "没收到配对码", "再试一次", pairPort > 0); return; }
+        note(c, "正在配对…", "端口 " + pairPort, false);
         pair(c, pairPort, code.toString());
     }
 }

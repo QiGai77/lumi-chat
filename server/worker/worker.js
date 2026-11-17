@@ -61,7 +61,13 @@ export default {
     if (!MODELS[pub]) return err(400, '只支持 helium / neon / argon')
     const name = MODELS[pub]
 
-    const msgs = (Array.isArray(body.messages) ? body.messages : []).map(m => ({ role: m.role, content: m.content }))
+    const msgs = (Array.isArray(body.messages) ? body.messages : []).map(m => {
+      const o = { role: m.role, content: m.content ?? '' }
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length) o.tool_calls = m.tool_calls
+      if (m.tool_call_id) o.tool_call_id = m.tool_call_id
+      if (m.reasoning_content) o.reasoning_content = m.reasoning_content
+      return o
+    })
     const think = !!body.reasoning_effort
     const up = {
       model: UPSTREAM[pub],
@@ -71,6 +77,7 @@ export default {
       thinking: { type: think ? 'enabled' : 'disabled' },
       ...(think ? { reasoning_effort: body.reasoning_effort === 'max' ? 'max' : 'high' } : {}),
       ...(body.max_tokens ? { max_tokens: body.max_tokens } : {}),
+      ...(Array.isArray(body.tools) && body.tools.length ? { tools: body.tools.slice(0, 64), ...(body.tool_choice ? { tool_choice: body.tool_choice } : {}) } : {}),
       ...(!think && typeof body.temperature === 'number' ? { temperature: body.temperature } : {}),
     }
     const res = await fetch(API + '/chat/completions', {
