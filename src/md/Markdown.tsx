@@ -85,7 +85,7 @@ function phrasing(nodes: PhrasingContent[], ctx: Ctx): ReactNode[] {
       case 'delete': return <del key={i}>{phrasing(n.children, ctx)}</del>
       case 'inlineCode': return <code key={i}>{n.value}</code>
       case 'break': return <br key={i} />
-      case 'inlineMath': return <Formula key={i} tex={n.value} display={false} />
+      case 'inlineMath': return <Formula key={i} tex={n.value} display={!!(n as { display?: boolean }).display} />
       case 'link': return <a key={i} href={sanitizeUrl(n.url)} target="_blank" rel="noreferrer noopener">{phrasing(n.children, ctx)}</a>
       case 'image': return <img key={i} className="md-img" src={sanitizeUrl(n.url)} alt={n.alt || ''} loading="lazy" />
       case 'html': return n.value
@@ -100,7 +100,11 @@ function block(nodes: RootContent[], ctx: Ctx): ReactNode[] {
 
 function render(n: Nodes, key: number, ctx: Ctx): ReactNode {
   switch (n.type) {
-    case 'paragraph': return <p key={key}>{phrasing(n.children, ctx)}</p>
+    case 'paragraph': {
+      const real = n.children.filter(c => !(c.type === 'text' && !c.value.trim()))
+      if (real.length === 1 && real[0].type === 'inlineMath' && (real[0] as { display?: boolean }).display) return <Formula key={key} tex={real[0].value} display />
+      return <p key={key}>{phrasing(n.children, ctx)}</p>
+    }
     case 'heading': { const H = `h${Math.min(n.depth + 1, 6)}` as 'h2'; return <H key={key}>{phrasing(n.children, ctx)}</H> }
     case 'blockquote': return <blockquote key={key}>{block(n.children, ctx)}</blockquote>
     case 'list': {

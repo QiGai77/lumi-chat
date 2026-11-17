@@ -23,6 +23,12 @@ export function toMdAst(input: string): Root {
     switch (node.type) {
       case 'footnoteReference': case 'imageReference': case 'linkReference':
         return [text(raw(node))]
+      case 'inlineMath': {
+        // $$..$$ or \[..\] written on one line parses as inline math; keep it display-style
+        const r = raw(node)
+        if (r.startsWith('$$') || r.startsWith('\\[')) (node as { display?: boolean }).display = true
+        return [node]
+      }
       case 'footnoteDefinition': case 'definition':
         return [{ type: 'paragraph', children: [text(raw(node))] }]
       default:

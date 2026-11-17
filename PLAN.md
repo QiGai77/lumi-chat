@@ -31,9 +31,9 @@
 | `src/genui.tsx` | lumi-ui 组件与系统提示词 `GENUI_PROMPT` | 已写 |
 | `src/media.ts` | IndexedDB 存图片/视频/壁纸 | 已写 |
 | `src/api.ts` | 新设置项、system prompt、`generateImage`、`generateVideo` | 已写 |
-| `src/App.tsx` | 接入 Markdown、生成模式、媒体消息、新钱包、主题、设置项 | 待做 |
-| `src/index.css` | v0.6 主题变量、Markdown/KaTeX/代码/genUI/钱包样式 | 待做 |
-| `README.md` | 新功能、署名（chat-demo MIT、两个 Figma 文件 CC BY 4.0） | 待做 |
+| `src/App.tsx` | 接入 Markdown、生成模式、媒体消息、新钱包、主题、设置项 | 已做 |
+| `src/index.css` | v0.6 主题变量、Markdown/KaTeX/代码/genUI/钱包样式 | 已做 |
+| `README.md` | 新功能、署名（chat-demo MIT、两个 Figma 文件 CC BY 4.0） | 已做 |
 
 ## 约定
 - 中文界面，不用 emoji（内联 SVG 图标，`src/icons.tsx`）。
@@ -43,3 +43,5 @@
 
 ## 进度日志
 - 2026-11-17 18:25 计划写好；parse/Markdown/genui/media/api 已写，尚未接入 App，未编译验证。
+- 2026-11-17 18:50 全部接入并通过编译；`$$` 单行公式按块级显示；截图自测 Markdown/公式/卡片/钱包正常。版本号 0.7，打 tag v0.7 由 Actions 出 APK。
+- 待验证：真机上壁纸主题、图片/视频接口（取决于网关支持的模型）。
