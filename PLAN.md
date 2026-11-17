@@ -154,3 +154,11 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 - 手机操控模式：对话「+」→ 手机操控，模型获得 phone_* 工具；工具循环最多 30 步，步骤折叠显示；Worker 透传 tools / tool_calls / tool_call_id / reasoning_content。
 - 项目存到手机：项目/<名>/ 下存 项目说明.md、对话/*.md（自动同步）、.lumi/*.json（导入用）；项目页可浏览文件、预览 html；项目列表「从手机存储导入项目」。项目里模型可用 phone_save/read/files 读写项目文件夹。
 - 待真机验证：无障碍读屏、配对通知、ADB shell、SAF 写入。
+
+## v0.15 Flow 工作流（2026-11-17）
+用户：针对无障碍的 Flow 功能，自定义点击行为作为应用的小工作流（小红书 搜索、美团 点外卖…），AI 可以自定义、优化、保存 Flow。
+- 原生 LumiFlow（无障碍服务内）：录制（点击/长按/输入/滚动/启动应用事件 → 步骤，选择器 id+文字+描述，坐标存 0-1 比例）；运行（选择器打分查找、等待重试、坐标兜底、optional 跳过、confirm 悬浮条确认）；TYPE_ACCESSIBILITY_OVERLAY 悬浮条显示进度/停止/完成/撤销。
+- src/flow.ts：Flow 存 localStorage（关联了手机文件夹时同步到 Flow/flows.json），{参数} 替换、tidy 清理、flow_list / flow_run / flow_save 工具。
+- 页面：侧栏 Flow（按应用分组、运行、录制新 Flow 选应用）；编辑页（改名/说明、步骤展开编辑、可选/确认/上下移/删除、添加步骤、AI 优化预览后采用、试运行，失败定位到卡住的步骤）。
+- 手机操控对话：系统提示带上 Flow 列表，匹配时优先 flow_run；失败返回屏幕让模型接手并建议 flow_save 修复；执行过的操作记录 trace，完成后显示「存成 Flow」。
+- 实测：网关上模型能正确调用 flow_run 并填参数；Flow 列表、编辑、AI 优化页面截图正常。原生部分待真机。
