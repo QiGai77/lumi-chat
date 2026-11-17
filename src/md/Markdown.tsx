@@ -74,12 +74,19 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
   )
 }
 
-type Ctx = { onAction?: (s: string) => void }
+type Ctx = { onAction?: (s: string) => void; rp?: boolean }
+
+/** 角色扮演：台词（引号里的话）高亮。 */
+const QUOTE = /(“[^”\n]*”|「[^」\n]*」|『[^』\n]*』|"[^"\n]{1,400}")/
+function quotes(t: string, key: number): ReactNode {
+  const parts = t.split(QUOTE)
+  return parts.length === 1 ? t : parts.map((p, j) => j % 2 ? <span key={`${key}-${j}`} className="rp-q">{p}</span> : p)
+}
 
 function phrasing(nodes: PhrasingContent[], ctx: Ctx): ReactNode[] {
   return nodes.map((n, i) => {
     switch (n.type) {
-      case 'text': return n.value
+      case 'text': return ctx.rp ? quotes(n.value, i) : n.value
       case 'strong': return <strong key={i}>{phrasing(n.children, ctx)}</strong>
       case 'emphasis': return <em key={i}>{phrasing(n.children, ctx)}</em>
       case 'delete': return <del key={i}>{phrasing(n.children, ctx)}</del>
@@ -152,7 +159,7 @@ function useThrottled(src: string, streaming: boolean) {
   return { shown, cost }
 }
 
-export const Markdown = memo(function Markdown({ src, streaming = false, onAction }: { src: string; streaming?: boolean; onAction?: (s: string) => void }) {
+export const Markdown = memo(function Markdown({ src, streaming = false, onAction, rp }: { src: string; streaming?: boolean; onAction?: (s: string) => void; rp?: boolean }) {
   const { shown, cost } = useThrottled(src, streaming)
   const tree = useMemo(() => {
     const t0 = performance.now()
@@ -160,5 +167,5 @@ export const Markdown = memo(function Markdown({ src, streaming = false, onActio
     cost.current = performance.now() - t0
     return ast
   }, [shown, cost])
-  return <div className="md">{block(tree.children, { onAction })}</div>
+  return <div className={rp ? 'md rp-md' : 'md'}>{block(tree.children, { onAction, rp })}</div>
 })

@@ -7,7 +7,8 @@ import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
 import { AGENTS, agentById, type Agent } from './agents'
-import { blankChar, charById, greetings, macros, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
+import { RpView } from './rp'
+import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
 
 type View = 'home' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
@@ -693,7 +694,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '', settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
     try {
       const r = await streamChat({
-        settings, tier, think, messages: char && settings.rpMyLang !== false ? langHint(base) : base, signal: ctrl.current.signal, system, roleplay: !!char,
+        settings, tier, think, messages: char ? (settings.rpMyLang !== false ? langHint : (x: Msg[]) => x)(base.map(x => ({ ...x, content: runRegex(x.content, char, x.role === 'user' ? 'user' : 'ai', 'prompt', rpUser) }))) : base, signal: ctrl.current.signal, system, roleplay: !!char,
         onDelta: (t, rs) => {
           if (rs && t && !thinkMs) thinkMs = performance.now() - t0
           update(c => ({ ...c, messages: [...base, { role: 'assistant', content: t, reasoning: rs, tier, thinkMs: thinkMs || undefined }] }))
@@ -736,7 +737,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
                 {m.reasoning && <details className="think" open={busy && i === last && !m.content}>
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
-                <div className="a-body">{m.media ? <MediaView m={m.media} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
+                <div className="a-body">{m.media ? <MediaView m={m.media} /> : char ? <RpView src={runRegex(m.content, char, 'ai', 'display', rpUser)} streaming={busy && i === last} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
                   {busy && i === last && !m.media && !m.content && !m.reasoning && <span className="caret" />}</div>
                 {gi >= 0 && i === 0 && greets.length > 1 && <div className="swipe"><button onClick={() => swipe(-1)} aria-label="上一个开场"><Icon n="left" s={16} w={2.2} /></button>
                   <span className="mono t12">开场 {gi + 1}/{greets.length}</span><button onClick={() => swipe(1)} aria-label="下一个开场"><Icon n="right" s={16} w={2.2} /></button></div>}

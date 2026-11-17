@@ -7,12 +7,14 @@ import { putBlob } from './media'
 import { uid } from './store'
 
 export interface BookEntry { keys: string[]; content: string; enabled: boolean; constant?: boolean; secondary?: string[]; selective?: boolean; order?: number }
+/** 酒馆正则脚本（extensions.regex_scripts）。placement：1 用户输入，2 AI 输出。 */
+export interface RegexScript { name: string; find: string; replace: string; placement: number[]; disabled: boolean; markdownOnly: boolean; promptOnly: boolean; trim: string[] }
 export interface Character {
   id: string; name: string; avatar?: string // media blob id
   description: string; personality: string; scenario: string
   first_mes: string; alternate_greetings: string[]; mes_example: string
   system_prompt: string; post_history: string; creator_notes: string
-  tags: string[]; creator?: string; book: BookEntry[]; source?: string; created: number
+  tags: string[]; creator?: string; book: BookEntry[]; regex?: RegexScript[]; source?: string; created: number
 }
 
 const K = 'lumi.chars'
@@ -51,7 +53,41 @@ export function normalize(raw: unknown): Omit<Character, 'id' | 'created'> {
     creator_notes: s(d.creator_notes),
     tags: arr(d.tags), creator: s(d.creator) || undefined,
     book: entries,
+    regex: (Array.isArray((d.extensions as Record<string, unknown> | undefined)?.regex_scripts) ? (d.extensions as { regex_scripts: Record<string, unknown>[] }).regex_scripts : [])
+      .map(r => ({ name: s(r.scriptName), find: s(r.findRegex), replace: s(r.replaceString), placement: Array.isArray(r.placement) ? r.placement as number[] : [2],
+        disabled: !!r.disabled, markdownOnly: !!r.markdownOnly, promptOnly: !!r.promptOnly, trim: arr(r.trimStrings) }))
+      .filter(r => r.find),
   }
+}
+
+const reCache = new Map<string, RegExp | null>()
+function toRe(src: string) {
+  if (reCache.has(src)) return reCache.get(src)!
+  let re: RegExp | null = null
+  try {
+    const m = src.match(/^\/([\s\S]*)\/([dgimsuvy]*)$/)
+    re = m ? new RegExp(m[1], m[2]) : new RegExp(src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')
+  } catch { re = null }
+  reCache.set(src, re); return re
+}
+
+/** 按酒馆规则跑正则脚本。mode=display 用于显示，mode=prompt 用于发给模型的历史。 */
+export function runRegex(text: string, c: Character | undefined, who: 'user' | 'ai', mode: 'display' | 'prompt', user = '用户') {
+  if (!c?.regex?.length) return text
+  const place = who === 'user' ? 1 : 2
+  let out = text
+  for (const r of c.regex) {
+    if (r.disabled || !r.placement.includes(place)) continue
+    if (mode === 'display' && r.promptOnly) continue
+    if (mode === 'prompt' && r.markdownOnly) continue
+    const re = toRe(macros(r.find, c.name, user)); if (!re) continue
+    out = out.replace(re, (...a) => {
+      const groups = a.slice(1, a.findIndex((x, i) => i > 0 && typeof x === 'number'))
+      let m = String(a[0]); for (const t of r.trim) m = m.split(macros(t, c.name, user)).join('')
+      return macros(r.replace, c.name, user).replace(/\{\{match\}\}|\$&|\$0/g, m).replace(/\$(\d+)/g, (_, n) => String(groups[Number(n) - 1] ?? ''))
+    })
+  }
+  return out
 }
 
 function b64utf8(b64: string) {

@@ -137,3 +137,9 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 - 侧栏「角色」页：链接导入、文件导入、自己写；编辑页；设置里「我的名字」「用我的语言回复」。
 - Worker：/v1/card 代理（需密钥，15 MB 上限，拦内网）；lumi_mode=roleplay 时用入戏版身份提示（OOC 问模型仍答 Lumi）。
 - 实测：chub 导入 0.26s（8 条世界书），英文卡中文回复，OOC 答「由栖语 Lumi 的 Neon 模型驱动」。
+
+## v0.13 角色内容渲染（2026-11-17）
+用户：针对酒馆角色，生成渲染的功能内容特殊优化。
+- src/rp.tsx RpView：HTML 块（div/details/table/style…、```html）进无脚本沙箱 iframe，按内容自适应高度；自定义标签（<stats> 等）和「键: 值」代码块 → 玻璃状态卡（数组→标签，a/b 与百分比→进度条，??? 变灰）；<think>/<inner>/心声 → 折叠；行内 span/font 白名单净化；台词引号高亮；*动作* 浅色斜体。
+- chara.ts：导入 extensions.regex_scripts，runRegex 按 placement / markdownOnly / promptOnly 在显示与发给模型两侧分别执行（不改存储）。
+- 实测：mock 卡（正则好感度条 + stats + details 公告 + think）与 Isekai RPG 真实对话均正常。
