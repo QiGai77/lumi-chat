@@ -7,9 +7,10 @@ import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
 import { AGENTS, agentById, type Agent } from './agents'
+import { blankChar, charById, greetings, macros, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
 
-type View = 'home' | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
+type View = 'home' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
 type Gen = 'chat' | 'image' | 'video'
 const GEN_LABEL: Record<Gen, string> = { chat: '对话', image: '生成图片', video: '生成视频' }
 const QUICK: [string, string][] = [
@@ -52,10 +53,14 @@ export default function App() {
   }, [settings.baseUrl, settings.apiKey])
 
   const open = convs.find(c => c.id === openId) || null
+  const [chars, setCharsS] = useState<Character[]>(loadChars)
+  const setChars = (fn: (c: Character[]) => Character[]) => setCharsS(cs => { const n = fn(cs); saveChars(n); return n })
+  const editing = view.startsWith('char:') ? chars.find(c => c.id === view.slice(5)) : undefined
   const go = (v: View) => { setView(v); setOpenId(null); shut() }
   const openConv = (id: string) => { setOpenId(id); shut() }
-  const newChat = (first?: Pending, extra?: { agent?: Agent; project?: string }) => {
-    const c: Conv = { id: uid(), title: extra?.agent ? extra.agent.name : '新对话', tier, updated: Date.now(), messages: [], agent: extra?.agent?.id, project: extra?.project }
+  const newChat = (first?: Pending, extra?: { agent?: Agent; project?: string; char?: Character }) => {
+    const ch = extra?.char, g = ch ? greetings(ch, settings.rpUser || '用户')[0] : ''
+    const c: Conv = { id: uid(), title: ch ? ch.name : extra?.agent ? extra.agent.name : '新对话', tier, updated: Date.now(), messages: g ? [{ role: 'assistant', content: g, tier }] : [], agent: extra?.agent?.id, project: extra?.project, char: ch?.id }
     setConvs(cs => [c, ...cs]); setPending(first && first.text.trim() ? first : null); setOpenId(c.id); shut()
   }
   const update = (id: string, fn: (c: Conv) => Conv) => setConvs(cs => cs.map(c => (c.id === id ? fn(c) : c)))
@@ -105,6 +110,11 @@ export default function App() {
               {view === 'home' && <><div className="home-top">{menuBtn}</div>
                 <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
                   onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
+              {view === 'chars' && <>{head('角色', '和角色卡里的人物沉浸式聊天，支持导入酒馆角色卡')}<CharsPage chars={chars} settings={settings}
+                add={c => setChars(cs => [c, ...cs])} onChat={c => newChat(undefined, { char: c })} onEdit={c => go(`char:${c.id}`)} convs={convs} onOpen={openConv} /></>}
+              {view.startsWith('char:') && <>{back('chars', editing?.name || '新角色')}<CharEdit key={view} c={editing || { ...blankChar(), id: view.slice(5) }}
+                save={c => setChars(cs => cs.some(x => x.id === c.id) ? cs.map(x => x.id === c.id ? c : x) : [c, ...cs])}
+                remove={() => { setChars(cs => cs.filter(x => x.id !== view.slice(5))); go('chars') }} onChat={c => newChat(undefined, { char: c })} /></>}
               {view === 'skills' && <>{head('技能', '预设好角色和方法，点开就能用')}<Agents onPick={a => newChat(undefined, { agent: a })} /></>}
               {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<McpPage servers={servers} setServers={setServers} /></>}
               {view === 'tasks' && <>{head('定时任务', '到点自动提问，结果存成一段新对话')}<TasksPage tasks={tasks} setTasks={setTasks} onRun={runTask} onOpen={openConv} /></>}
@@ -145,6 +155,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClo
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
       <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
+      {item('chars', 'mask', '角色', 'rose')}
       {item('skills', 'spark', '技能', 'plum')}
       {item('mcp', 'plug', 'MCP', 'sky')}
       {item('tasks', 'clock', '定时任务', 'gold')}
@@ -503,6 +514,108 @@ function Favs({ convs, onOpen, onUnfav }: { convs: Conv[]; onOpen: (id: string) 
 }
 
 /* ---------------- 智能体 */
+/* ---------------- 角色扮演 */
+/** 英文卡 + 长英文开场时，系统提示里的语言要求常被忽略；只在发给模型的最后一条用户消息后附一句，不存进对话。 */
+function langHint(ms: Msg[]): Msg[] {
+  const i = ms.length - 1
+  if (i < 0 || ms[i].role !== 'user' || !/[\u4e00-\u9fff]/.test(ms[i].content)) return ms
+  return [...ms.slice(0, i), { ...ms[i], content: ms[i].content + '\n\n（系统提示：这条回复请用简体中文写，保持角色和格式；人名可保留原文。）' }]
+}
+function CharAvatar({ c, s = 40 }: { c: Character; s?: number }) {
+  const [u, setU] = useState<string | null>(null)
+  useEffect(() => { let on = true; if (c.avatar) blobUrl(c.avatar).then(x => on && setU(x)); return () => { on = false } }, [c.avatar])
+  return <span className="c-av" style={{ width: s, height: s }}>{u ? <img src={u} alt="" /> : <Icon n="mask" s={Math.round(s * 0.55)} w={1.7} c="#fff" />}</span>
+}
+
+function CharsPage({ chars, settings, add, onChat, onEdit, convs, onOpen }: {
+  chars: Character[]; settings: Settings; add: (c: Character) => void; onChat: (c: Character) => void; onEdit: (c: Character) => void; convs: Conv[]; onOpen: (id: string) => void
+}) {
+  const [link, setLink] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null)
+  const file = useRef<HTMLInputElement>(null)
+  const done = (c: Character) => { add(c); setMsg({ ok: true, t: `已导入「${c.name}」${c.book.length ? `，含 ${c.book.length} 条世界书` : ''}` }); setLink('') }
+  const fail = (e: unknown) => setMsg({ ok: false, t: (e as Error).message === 'Failed to fetch' ? '连不上服务器，检查一下网络' : (e as Error).message })
+  const byLink = async () => {
+    if (!link.trim() || busy) return
+    setBusy(true); setMsg(null)
+    try { done(await importLink(settings, link)) } catch (e) { fail(e) } finally { setBusy(false) }
+  }
+  const byFile = async (f?: File) => {
+    if (!f) return
+    setBusy(true); setMsg(null)
+    try { done(await importFile(f)) } catch (e) { fail(e) } finally { setBusy(false); if (file.current) file.current.value = '' }
+  }
+  const recent = convs.filter(c => c.char).slice(0, 4)
+  return (
+    <section className="fade">
+      <div className="import-card">
+        <div className="t16 b">导入角色卡</div>
+        <div className="t13">粘贴 chub.ai 角色页、PNG 角色卡或 JSON 的链接，也可以选本地文件</div>
+        <div className="imp-row">
+          <input className="inp" placeholder="https://chub.ai/characters/…" value={link} onChange={e => setLink(e.target.value)} onKeyDown={e => e.key === 'Enter' && byLink()} />
+          <button className="btn-ink" disabled={!link.trim() || busy} onClick={byLink}>{busy ? '导入中…' : '导入'}</button>
+        </div>
+        <div className="imp-row2">
+          <button className="btn-ghost" onClick={() => file.current?.click()} disabled={busy}><Icon n="upload" s={16} w={2} />从文件导入</button>
+          <button className="btn-ghost" onClick={() => onEdit(blankChar())}><Icon n="plus" s={16} w={2} />自己写一个</button>
+        </div>
+        <input ref={file} type="file" accept=".png,.json,image/png,application/json" hidden onChange={e => byFile(e.target.files?.[0])} />
+        {msg && <div className={`imp-msg ${msg.ok ? 'ok' : 'bad'}`}>{msg.t}</div>}
+      </div>
+      {chars.length === 0
+        ? <div className="empty-card"><GlassIcon n="mask" tone="rose" s={56} /><div className="t16 b">还没有角色</div><div className="t13">导入一张酒馆角色卡，或者自己写一个</div></div>
+        : <div className="char-grid">{chars.map(c => (
+          <div key={c.id} className="char-card press-row" onClick={() => onChat(c)}>
+            <CharAvatar c={c} s={64} />
+            <div className="grow">
+              <div className="t16 b ell">{c.name}</div>
+              <div className="t13 clamp2">{macros(c.creator_notes || c.description || c.scenario, c.name, settings.rpUser || '用户').replace(/<[^>]+>/g, '').slice(0, 90) || '没有简介'}</div>
+              {c.tags.length > 0 && <div className="tags">{c.tags.slice(0, 3).map(t => <span key={t}>{t}</span>)}</div>}
+            </div>
+            <button className="icon-btn" aria-label="编辑" onClick={e => { e.stopPropagation(); onEdit(c) }}><Icon n="pen" s={18} w={1.9} /></button>
+          </div>))}</div>}
+      {recent.length > 0 && <><div className="sec">最近的角色对话</div>
+        <div className="list">{recent.map(c => (
+          <button key={c.id} className="row press-row" onClick={() => onOpen(c.id)}>
+            <span className="grow"><span className="t16 ell">{c.title}</span><span className="t12">{c.messages.length} 条 · {when(c.updated)}</span></span><Icon n="right" s={16} w={2} />
+          </button>))}</div></>}
+    </section>
+  )
+}
+
+function CharEdit({ c, save, remove, onChat }: { c: Character; save: (c: Character) => void; remove: () => void; onChat: (c: Character) => void }) {
+  const [d, setD] = useState(c)
+  const [alt, setAlt] = useState(c.alternate_greetings.join('\n\n---\n\n'))
+  const isNew = !loadChars().some(x => x.id === c.id)
+  const commit = (x = d) => { if (x.name.trim()) save({ ...x, name: x.name.trim(), alternate_greetings: alt.split(/\n\s*---\s*\n/).map(t => t.trim()).filter(Boolean) }) }
+  const field = (k: keyof Character, label: string, ph: string, rows = 3) => (
+    <label className="fld"><span className="t13 b">{label}</span>
+      <textarea className="inp" rows={rows} placeholder={ph} value={String(d[k] ?? '')} onChange={e => setD({ ...d, [k]: e.target.value })} onBlur={() => !isNew && commit()} /></label>)
+  return (
+    <section className="fade char-edit">
+      <div className="ce-head"><CharAvatar c={d} s={76} />
+        <input className="inp big-name" placeholder="角色名" value={d.name} onChange={e => setD({ ...d, name: e.target.value })} onBlur={() => !isNew && commit()} /></div>
+      {d.source && <div className="t12 ell dim">来源：{d.source}</div>}
+      {field('description', '角色设定', '外貌、身份、背景、说话方式……可以用 {{char}} 和 {{user}}', 6)}
+      {field('personality', '性格', '一句话概括性格')}
+      {field('scenario', '场景', '故事发生在哪里、你们是什么关系')}
+      {field('first_mes', '开场白', '角色说的第一句话', 5)}
+      <label className="fld"><span className="t13 b">备选开场白</span>
+        <textarea className="inp" rows={4} placeholder="多个开场之间用单独一行 --- 隔开" value={alt} onChange={e => setAlt(e.target.value)} onBlur={() => !isNew && commit()} /></label>
+      {field('mes_example', '对话示例', '<START>\n{{user}}: 你好\n{{char}}: ……', 4)}
+      {field('system_prompt', '系统提示词（可选）', '留空用默认的角色扮演提示词')}
+      {field('post_history', '额外要求（可选）', '比如：每次回复 200 字以内')}
+      {d.book.length > 0 && <div className="t13 dim">世界书：{d.book.length} 条（{d.book.filter(e => e.constant).length} 条常驻，其余在聊到关键词时加入）</div>}
+      <div className="ce-acts">
+        <button className="btn-ink" disabled={!d.name.trim()} onClick={() => { commit(); onChat({ ...d, alternate_greetings: alt.split(/\n\s*---\s*\n/).map(t => t.trim()).filter(Boolean) }) }}>保存并开始聊天</button>
+        {isNew ? <button className="btn-ghost" disabled={!d.name.trim()} onClick={() => commit()}>保存</button>
+          : <button className="btn-ghost danger" onClick={() => { if (confirm(`删除角色「${d.name}」？`)) remove() }}><Icon n="trash" s={16} w={2} />删除</button>}
+      </div>
+    </section>
+  )
+}
+
 function Agents({ onPick }: { onPick: (a: Agent) => void }) {
   return (
     <section className="fade">
@@ -543,6 +656,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const pinned = useRef(true)
   const composing = useRef(false)
   const agent = agentById(conv.agent)
+  const char = charById(conv.char)
+  const rpUser = settings.rpUser || '用户'
   useEffect(() => { if (pinned.current) scroller.current?.scrollTo({ top: 1e9 }) }, [conv.messages])
 
   const setLast = (fn: (m: Msg) => Msg) => update(c => { const m = [...c.messages]; m[m.length - 1] = fn(m[m.length - 1]); return { ...c, messages: m } })
@@ -575,10 +690,10 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     update(c => ({ ...c, title, tier, updated: Date.now(), messages: [...base, { role: 'assistant', content: '', tier }] }))
     const t0 = performance.now()
     let thinkMs = 0
-    const system = [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '', settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+    const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '', settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
     try {
       const r = await streamChat({
-        settings, tier, think, messages: base, signal: ctrl.current.signal, system,
+        settings, tier, think, messages: char && settings.rpMyLang !== false ? langHint(base) : base, signal: ctrl.current.signal, system, roleplay: !!char,
         onDelta: (t, rs) => {
           if (rs && t && !thinkMs) thinkMs = performance.now() - t0
           update(c => ({ ...c, messages: [...base, { role: 'assistant', content: t, reasoning: rs, tier, thinkMs: thinkMs || undefined }] }))
@@ -598,7 +713,10 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const regen = () => { const m = conv.messages; if (m.length >= 2 && !m[m.length - 1].media) send(m.slice(0, -1)) }
   const toggleFav = (i: number) => update(c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: !m.fav } : m) }))
   const last = conv.messages.length - 1
-  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${agent ? ' · ' + agent.name : ''}${project ? ' · ' + project.name : ''}`
+  const greets = char ? greetings(char, rpUser) : []
+  const gi = char && conv.messages.length === 1 ? Math.max(0, greets.indexOf(conv.messages[0].content)) : -1
+  const swipe = (d: number) => { const n = (gi + d + greets.length) % greets.length; update(c => ({ ...c, messages: [{ ...c.messages[0], content: greets[n] }] })) }
+  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${char ? ' · 角色扮演' : ''}${agent ? ' · ' + agent.name : ''}${project ? ' · ' + project.name : ''}`
 
   return (
     <div className="chat slide-in">
@@ -613,13 +731,15 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
           </div>}
           {conv.messages.map((m, i) => m.role === 'user'
             ? <div key={i} className="u-row fade"><div className="u-bub">{m.content}</div></div>
-            : <div key={i} className="a-msg fade">
-                <div className="a-head"><span className="a-dot" />栖语<span className="model-pill" onClick={onMode}>{m.media ? GEN_LABEL[m.media.kind] : MODEL_NAME[asTier(m.tier || tier)]}</span></div>
+            : <div key={i} className={`a-msg fade ${char ? 'rp' : ''}`}>
+                <div className="a-head">{char ? <><CharAvatar c={char} s={26} />{char.name}</> : <><span className="a-dot" />栖语</>}<span className="model-pill" onClick={onMode}>{m.media ? GEN_LABEL[m.media.kind] : MODEL_NAME[asTier(m.tier || tier)]}</span></div>
                 {m.reasoning && <details className="think" open={busy && i === last && !m.content}>
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
                   {busy && i === last && !m.media && !m.content && !m.reasoning && <span className="caret" />}</div>
+                {gi >= 0 && i === 0 && greets.length > 1 && <div className="swipe"><button onClick={() => swipe(-1)} aria-label="上一个开场"><Icon n="left" s={16} w={2.2} /></button>
+                  <span className="mono t12">开场 {gi + 1}/{greets.length}</span><button onClick={() => swipe(1)} aria-label="下一个开场"><Icon n="right" s={16} w={2.2} /></button></div>}
                 {m.stopped && !(busy && i === last) && <div className="stopped t13">已停止生成</div>}
                 {!(busy && i === last) && (m.content || m.stopped || m.media?.status === 'done') && (
                   <div className="acts">
@@ -645,7 +765,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
         <Glass className="c-field" radius={28}>
           <button className={`c-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={21} w={2} /></button>
           {gen !== 'chat' && <button className="gen-chip" onClick={() => setGen('chat')}><Icon n={gen === 'image' ? 'image' : 'film'} s={14} w={2.2} />{GEN_LABEL[gen]}<Icon n="x" s={12} w={2.4} /></button>}
-          <textarea rows={1} placeholder={gen === 'chat' ? (conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
+          <textarea rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
             onCompositionStart={() => (composing.current = true)} onCompositionEnd={() => (composing.current = false)}
             onChange={e => { setText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px' }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !composing.current && window.innerWidth > 700) { e.preventDefault(); if (!busy) send() } }} />
@@ -833,6 +953,11 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
       <div className="key-link">
         {kp ? <a href={kp} target="_blank" rel="noreferrer">获取密钥<Icon n="up" s={12} w={2.4} /></a> : <span className="t13">填写网关后可直接跳转获取密钥</span>}
       </div>
+      <div className="sec">角色扮演</div>
+      <div className="list">{f('rpUser', '我的名字', 'users', '用户（角色卡里的 {{user}}）')}
+        <div className="row"><span className="ico"><Icon n="globe" s={16} w={2} /></span>
+          <div className="grow"><div className="t16">用我的语言回复</div><div className="t13">英文角色卡也用中文聊</div></div>
+          <Toggle on={s.rpMyLang !== false} set={b => set({ ...s, rpMyLang: b })} /></div></div>
       <div className="sec">对话</div>
       <div className="list">
         <div className="row"><span className="ico"><Icon n="spark" s={16} w={2} /></span>

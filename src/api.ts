@@ -18,6 +18,8 @@ export interface Settings {
   keyUrl: string         // where 获取密钥 goes; empty = {baseUrl}/keys
   purchaseUrl: string    // where 订阅 goes; empty = {baseUrl}/purchase
   genUI: boolean
+  rpUser: string         // 角色扮演里 {{user}} 的名字
+  rpMyLang: boolean      // 角色卡是外语时也用我的语言回复
   mediaBaseUrl: string
   mediaKey: string
   imageModel: string
@@ -31,7 +33,7 @@ export const APP_KEY = 'lumi-app-7f3c9a2e'
 
 export const defaultSettings: Settings = {
   baseUrl: 'https://api.qigai.tech', apiKey: APP_KEY, keyUrl: '', purchaseUrl: '',
-  genUI: true,
+  genUI: true, rpUser: '', rpMyLang: true,
   mediaBaseUrl: '', mediaKey: '',
   imageModel: 'gpt-image-1', imageSize: '1024x1024',
   videoModel: 'sora-2', videoSeconds: 4,
@@ -58,7 +60,7 @@ export interface Media { kind: 'image' | 'video'; id: string; prompt: string; st
 export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
 
 export async function streamChat(opts: {
-  settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string
+  settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string; roleplay?: boolean
   onDelta: (text: string, reasoning: string) => void
 }): Promise<{ promptTokens: number; completionTokens: number; firstTokenMs: number }> {
   const { settings: s, tier, think } = opts
@@ -73,6 +75,7 @@ export async function streamChat(opts: {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
       model, stream: true, stream_options: { include_usage: true },
+      ...(opts.roleplay ? { lumi_mode: 'roleplay', temperature: 1 } : {}),
       ...(think ? { reasoning_effort: 'high' } : {}),
       messages: [
         ...(opts.system ? [{ role: 'system', content: opts.system }] : []),

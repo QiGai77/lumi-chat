@@ -130,3 +130,10 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 - 2026-11-17 自测通过（design/v11/），tag v0.11。
 - v0.11.1：文件夹前盖改成磨砂玻璃（前盖里放模糊的纸张副本，不依赖 backdrop-filter）；默认头像去掉首字母，用户头像换成人形图标，MCP 官网头像加载失败时显示玻璃插头图标。
 - v0.11.2（2026-11-17 20:20）：Playwright 实测（scripts/e2e.py，连真实 api.qigai.tech）：首字 0.8 到 2.0 秒，身份、表格、代码、深度思考、停止生成都通过。修复：网关和公开客户端密钥 APP_KEY 内置，装好就能用（Worker 接受 LUMI_KEY 或 APP_KEY，并按 IP 每分钟限 20 次）；报错改成中文（断网、401、429、5xx）；停止生成后显示「已停止生成」并可以重答；输入框在深色代码上方不再发灰；表格单元格自动换行，不再被截断。沙盒代理会对 CORS 预检返回 407，测试脚本里用 route 绕过，真机不受影响。
+
+## v0.12 角色扮演（2026-11-17）
+用户：官方支持角色扮演类，支持链接导入酒馆角色卡。
+- src/chara.ts：PNG（chara/ccv3，tEXt/iTXt）、JSON V1/V2/V3、chub.ai/characterhub 链接（avatars.charhub.io 卡 → api.chub.ai 兜底）、网页 og:image；宏 {{char}}/{{user}}；世界书（常驻 + 关键词）；对话示例；开场白与备选开场（左右切换）。
+- 侧栏「角色」页：链接导入、文件导入、自己写；编辑页；设置里「我的名字」「用我的语言回复」。
+- Worker：/v1/card 代理（需密钥，15 MB 上限，拦内网）；lumi_mode=roleplay 时用入戏版身份提示（OOC 问模型仍答 Lumi）。
+- 实测：chub 导入 0.26s（8 条世界书），英文卡中文回复，OOC 答「由栖语 Lumi 的 Neon 模型驱动」。
