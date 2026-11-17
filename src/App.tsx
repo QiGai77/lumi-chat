@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Glass } from './glass'
-import { Icon } from './icons'
+import { GlassIcon, Icon } from './icons'
 import { MODEL_NAME, MODELS, PLANS, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
 import { Markdown } from './md/Markdown'
 import { GENUI_PROMPT } from './genui'
@@ -136,19 +136,19 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClo
 }) {
   const [q, setQ] = useState('')
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
-  const item = (v: View, icon: string, label: string) => (
-    <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) ? 'on' : ''}`} onClick={() => go(v)}><Icon n={icon} s={19} w={1.9} />{label}</button>)
+  const item = (v: View, icon: string, label: string, tone: string) => (
+    <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) ? 'on' : ''}`} onClick={() => go(v)}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
   return (
     <aside className="side">
       <div className="s-head">
         <button className="side-btn" onClick={onClose} aria-label="收起侧栏"><Icon n="side" s={22} w={1.9} /></button>
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
-      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><Icon n="compose" s={19} w={1.9} />新建对话</button>
-      {item('skills', 'spark', '技能')}
-      {item('mcp', 'plug', 'MCP')}
-      {item('tasks', 'clock', '定时任务')}
-      {item('projects', 'folder', '项目')}
+      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
+      {item('skills', 'spark', '技能', 'plum')}
+      {item('mcp', 'plug', 'MCP', 'sky')}
+      {item('tasks', 'clock', '定时任务', 'gold')}
+      {item('projects', 'folder', '项目', 'sage')}
       <div className="s-sec">最近</div>
       <div className="s-list">
         {list.length === 0 && <div className="t13 s-empty">{q ? '没有找到' : '还没有对话'}</div>}
@@ -186,9 +186,9 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
         <button className="acct-btn" onClick={() => go('wallet')}>{plan ? '管理' : '升级'}</button>
       </div>
       <div className="list" style={{ marginTop: 18 }}>
-        <button className="row press-row" onClick={() => go('wallet')}><span className="ico"><Icon n="crown" s={16} w={2} /></span><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
-        <button className="row press-row" onClick={() => go('fav')}><span className="ico"><Icon n="star" s={16} w={2} /></span><span className="t16 grow">收藏</span><span className="t13">{favCount || ''}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
-        <button className="row press-row" onClick={() => go('settings')}><span className="ico"><Icon n="gear" s={16} w={2} /></span><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => go('wallet')}><GlassIcon n="crown" tone="gold" s={32} /><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => go('fav')}><GlassIcon n="star" tone="coral" s={32} /><span className="t16 grow">收藏</span><span className="t13">{favCount || ''}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => go('settings')}><GlassIcon n="gear" tone="slate" s={32} /><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
       </div>
     </section>
   )
@@ -196,7 +196,7 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
 
 /* ---------------- MCP */
 function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f: (s: McpServer[]) => McpServer[]) => void }) {
-  const [form, setForm] = useState<{ name: string; url: string; token: string } | null>(null)
+  const [form, setForm] = useState<{ name: string; url: string; token: string; site: string } | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const patch = (id: string, p: Partial<McpServer>) => setServers(ss => ss.map(s => s.id === id ? { ...s, ...p } : s))
   const test = async (s: McpServer) => {
@@ -207,12 +207,13 @@ function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f
   }
   return (
     <section className="fade">
-      {servers.length === 0 && !form && <div className="empty-card"><Icon n="plug" s={28} w={1.6} /><div>还没有 MCP 服务器</div><span className="t13">添加后可以读取它提供的工具</span></div>}
+      {servers.length === 0 && !form && <div className="empty-card"><GlassIcon n="plug" tone="sky" s={56} /><div>还没有 MCP 服务器</div><span className="t13">添加后可以读取它提供的工具</span></div>}
       <div className="stack">{servers.map(s => (
         <div key={s.id} className="card-row">
           <div className="cr-h">
-            <span className={`st-dot ${s.status}`} />
-            <div className="grow"><div className="t16 b ell">{s.name}</div><div className="t12 ell">{s.url}</div></div>
+            <Favicon site={s.site || siteOf(s.url)} name={s.name} status={s.status} />
+            <div className="grow"><div className="t16 b ell">{s.name}</div>
+              <a className="t12 ell site-link" href={'https://' + (s.site || siteOf(s.url))} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}>{s.site || siteOf(s.url)}</a></div>
             <Toggle on={s.enabled} set={b => patch(s.id, { enabled: b })} />
           </div>
           {s.status === 'error' && <div className="err sm">{s.error}</div>}
@@ -227,15 +228,32 @@ function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f
         <div className="card-row form">
           <input className="inp" placeholder="名称，如 GitHub" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
           <input className="inp" placeholder="https://…/mcp" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} />
+          <input className="inp" placeholder={'官网（可选，默认 ' + (form.url ? siteOf(form.url) : '从地址推断') + '）'} value={form.site} onChange={e => setForm({ ...form, site: e.target.value })} />
           <input className="inp" placeholder="Bearer Token（可选）" type="password" value={form.token} onChange={e => setForm({ ...form, token: e.target.value })} />
           <div className="cr-acts">
-            <button className="pill-btn solid" onClick={() => { if (!form.url.trim()) return; const s: McpServer = { id: uid(), name: form.name.trim() || new URL(form.url, location.href).host, url: form.url.trim(), token: form.token, enabled: true, tools: [], status: 'unknown' }; setServers(ss => [...ss, s]); setForm(null); test(s) }}>添加</button>
+            <button className="pill-btn solid" onClick={() => { if (!form.url.trim()) return; const s: McpServer = { id: uid(), name: form.name.trim() || siteOf(form.url), url: form.url.trim(), token: form.token, site: form.site.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '') || undefined, enabled: true, tools: [], status: 'unknown' }; setServers(ss => [...ss, s]); setForm(null); test(s) }}>添加</button>
             <button className="pill-btn ghost" onClick={() => setForm(null)}>取消</button>
           </div>
         </div>
-      ) : <button className="add-btn press" onClick={() => setForm({ name: '', url: '', token: '' })}><Icon n="plus" s={18} w={2.2} />添加服务器</button>}
+      ) : <button className="add-btn press" onClick={() => setForm({ name: '', url: '', token: '', site: '' })}><Icon n="plus" s={18} w={2.2} />添加服务器</button>}
       <div className="t12 foot">目前可连接并读取工具列表；在对话中调用工具将在下一版接入</div>
     </section>
+  )
+}
+
+/** 从 MCP 地址推断官网：去掉 mcp. / api. 之类的前缀。 */
+function siteOf(u: string) {
+  try { const h = new URL(u.includes('://') ? u : 'https://' + u).hostname; return /^\d+\.\d+\.\d+\.\d+$|^localhost$/.test(h) ? h : h.replace(/^(mcp|api|server|gateway)\d*\./, '') } catch { return u }
+}
+function Favicon({ site, name, status }: { site: string; name: string; status: McpServer['status'] }) {
+  const srcs = [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
+  const [i, setI] = useState(0)
+  return (
+    <span className="fav">
+      {i < srcs.length ? <img src={srcs[i]} alt="" onError={() => setI(i + 1)} onLoad={e => { if ((e.target as HTMLImageElement).naturalWidth < 2) setI(i + 1) }} />
+        : <b>{(name || site)[0]?.toUpperCase()}</b>}
+      <span className={`st-dot ${status}`} />
+    </span>
   )
 }
 
@@ -248,7 +266,7 @@ function TasksPage({ tasks, setTasks, onRun, onOpen }: { tasks: Task[]; setTasks
   const dayText = (d: number[]) => d.length === 0 || d.length === 7 ? '每天' : d.length === 5 && [1, 2, 3, 4, 5].every(x => d.includes(x)) ? '工作日' : '每周' + [...d].sort().map(x => WEEK[x]).join('')
   return (
     <section className="fade">
-      {tasks.length === 0 && !form && <div className="empty-card"><Icon n="clock" s={28} w={1.6} /><div>还没有定时任务</div><span className="t13">比如每天 8:00 给你一份新闻摘要</span></div>}
+      {tasks.length === 0 && !form && <div className="empty-card"><GlassIcon n="clock" tone="gold" s={56} /><div>还没有定时任务</div><span className="t13">比如每天 8:00 给你一份新闻摘要</span></div>}
       <div className="stack">{tasks.map(t => (
         <div key={t.id} className="card-row">
           <div className="cr-h">
@@ -293,7 +311,7 @@ function ProjectsPage({ projects, setProjects, convs, onOpen }: { projects: Proj
   const [name, setName] = useState<string | null>(null)
   return (
     <section className="fade">
-      {projects.length === 0 && name === null && <div className="empty-card"><Icon n="folder" s={28} w={1.6} /><div>还没有项目</div><span className="t13">比如「毕业论文」「求职」，对话会共用项目说明</span></div>}
+      {projects.length === 0 && name === null && <div className="empty-card"><GlassIcon n="folder" tone="sage" s={56} /><div>还没有项目</div><span className="t13">比如「毕业论文」「求职」，对话会共用项目说明</span></div>}
       <div className="agents">{projects.map(p => (
         <button key={p.id} className={`agent ${p.tone} press-row`} onClick={() => onOpen(p.id)}>
           <span className="ag-i"><Icon n="folder" s={21} w={1.9} /></span>
@@ -827,7 +845,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 网关/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 网关/purchase')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.10 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.11 · 开源 MIT</div>
     </section>
   )
 }

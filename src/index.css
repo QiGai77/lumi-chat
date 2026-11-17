@@ -452,3 +452,43 @@ button.row{width:100%;text-align:left}
 .days button{width:34px;height:34px;border-radius:50%;font-size:13.5px;background:rgba(20,26,38,.05);color:var(--label2)}
 .days button.on{background:var(--accent);color:#fff;font-weight:600}
 .adv-toggle.danger{color:#d0383e}
+
+/* ---------- v0.11 液态玻璃 + 玻璃图标 + 文件夹展开 */
+.gi{position:relative;display:inline-block;flex:none}
+.gi-back{position:absolute;left:4%;top:4%;width:72%;height:72%;border-radius:32%;transform:rotate(-14deg);background:linear-gradient(140deg,var(--g1),var(--g2));box-shadow:0 4px 10px -2px var(--g2)}
+.gi-front{position:absolute;right:0;bottom:0;width:80%;height:80%;border-radius:30%;display:grid;place-items:center;
+  background:linear-gradient(150deg,rgba(255,255,255,.55),rgba(255,255,255,.14));backdrop-filter:blur(6px) saturate(160%);-webkit-backdrop-filter:blur(6px) saturate(160%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.9),inset 0 0 0 1px rgba(255,255,255,.45),0 6px 14px -6px rgba(80,30,10,.25)}
+.gi-front svg{filter:drop-shadow(0 1px 1px rgba(120,40,20,.25))}
+.gi.coral{--g1:#ff9a72;--g2:#e0583e}.gi.plum{--g1:#d39ad0;--g2:#9a5b9c}.gi.sky{--g1:#8fc6f0;--g2:#4d8fd0}
+.gi.gold{--g1:#f5d07e;--g2:#d9a13a}.gi.sage{--g1:#a9c99a;--g2:#6f9763}.gi.slate{--g1:#a3acbd;--g2:#5f6b80}
+.s-item{gap:12px;height:48px}
+.s-item.on{background:rgba(255,255,255,.55);color:var(--ink);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 4px 14px -6px rgba(120,60,30,.18)}
+.empty-card .gi{margin-bottom:6px}
+/* 液态玻璃材质：模糊 + 饱和 + 顶部高光 + 边缘折射 */
+.side{background:linear-gradient(160deg,rgba(255,250,246,.82),rgba(255,240,232,.72));backdrop-filter:blur(34px) saturate(190%);-webkit-backdrop-filter:blur(34px) saturate(190%);
+  box-shadow:inset -1px 0 0 rgba(255,255,255,.8),10px 0 40px rgba(120,60,30,.08)}
+@media (max-width:979px){.side{background:linear-gradient(160deg,rgba(255,250,246,.98),rgba(255,243,236,.96))}}
+.compose-card,.card-row,.me-card,.list,.chat-bar,.chat-input{position:relative;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(255,255,255,.35),inset 0 0 0 1px rgba(255,255,255,.4),0 18px 40px -18px rgba(150,70,30,.28),0 2px 6px rgba(150,70,30,.05)}
+.compose-card::after,.card-row::after,.me-card::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:radial-gradient(120% 60% at 20% 0%,rgba(255,255,255,.55),transparent 55%),radial-gradient(80% 50% at 100% 100%,rgba(255,190,160,.18),transparent 60%)}
+.compose-card>*,.card-row>*,.me-card>*{position:relative;z-index:1}
+/* 文件夹：悬停 / 按住时纸张抽出展开，前盖往前倾 */
+.folder{perspective:900px}
+.f-sheet{transition:transform .5s var(--spring),top .5s var(--spring)}
+.f-front{transform-origin:50% 100%;transition:transform .5s var(--spring);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 -6px 18px -8px rgba(60,20,10,.25)}
+.folder:hover .f-sheet.s1,.folder:active .f-sheet.s1{transform:rotate(-12deg) translate(-8px,-14px)}
+.folder:hover .f-sheet.s2,.folder:active .f-sheet.s2{transform:rotate(-1deg) translateY(-24px)}
+.folder:hover .f-sheet.s3,.folder:active .f-sheet.s3{transform:rotate(11deg) translate(8px,-14px)}
+.folder:hover .f-front,.folder:active .f-front{transform:rotateX(-16deg)}
+.folder:active{transform:none}
+/* MCP 官网头像 */
+.fav{position:relative;width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;overflow:visible;
+  background:linear-gradient(150deg,#fff,rgba(255,255,255,.6));box-shadow:inset 0 1px 0 #fff,inset 0 0 0 1px rgba(20,26,38,.06),0 6px 14px -8px rgba(120,60,30,.3)}
+.fav img{width:26px;height:26px;border-radius:6px;object-fit:contain}
+.fav b{font-size:19px;color:var(--accent);font-family:var(--serif)}
+.fav .st-dot{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border:2px solid #fff;box-shadow:none}
+.site-link{display:block;color:var(--label2);text-decoration:none}
+.site-link:active{color:var(--accent)}

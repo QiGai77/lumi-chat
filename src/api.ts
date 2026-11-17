@@ -27,7 +27,7 @@ export interface Settings {
   theme: 'peach' | 'wallpaper'
 }
 export const defaultSettings: Settings = {
-  baseUrl: '', apiKey: '', keyUrl: '', purchaseUrl: '',
+  baseUrl: 'https://api.qigai.tech', apiKey: '', keyUrl: '', purchaseUrl: '',
   genUI: true,
   mediaBaseUrl: '', mediaKey: '',
   imageModel: 'gpt-image-1', imageSize: '1024x1024',
@@ -39,7 +39,7 @@ export function loadSettings(): Settings {
   try {
     const raw = JSON.parse(localStorage.getItem(SK) || '{}')
     if (!raw.apiKey && (raw.ecoKey || raw.fastKey)) raw.apiKey = raw.ecoKey || raw.fastKey // v0.7 → v0.8
-    if (raw.baseUrl === 'https://api.deepseek.com') raw.baseUrl = ''
+    if (!raw.baseUrl || raw.baseUrl === 'https://api.deepseek.com') delete raw.baseUrl // 空地址用默认网关
     const s: Record<string, unknown> = { ...defaultSettings }
     for (const k of Object.keys(defaultSettings)) if (k in raw) s[k] = raw[k]
     return s as unknown as Settings

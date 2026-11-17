@@ -1,24 +1,24 @@
 const P: Record<string, string> = {
   chat: '<path d="M12 4c4.97 0 9 3.36 9 7.5S16.97 19 12 19c-1.1 0-2.15-.16-3.12-.46L4 20l1.4-3.6C4.5 15.1 3 13.4 3 11.5 3 7.36 7.03 4 12 4z"/>',
   wallet: '<rect x="3" y="6" width="18" height="13" rx="3.5"/><path d="M3 10h18"/><path d="M16 14.5h2"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  gear: '<path fill-rule="evenodd" d="M20.8 7.6l-.6-1.1c-.5-.9-1.7-1.2-2.6-.7l-.3.2c-1.4.8-3.1-.2-3.1-1.8v-.4c0-1-.8-1.9-1.9-1.9h-1.3c-1 0-1.9.9-1.9 1.9v.4c0 1.6-1.7 2.6-3.1 1.8l-.3-.2c-.9-.5-2.1-.2-2.6.7l-.6 1.1c-.5.9-.2 2.1.7 2.6l.3.2c1.4.8 1.4 2.8 0 3.6l-.3.2c-.9.5-1.2 1.7-.7 2.6l.6 1.1c.5.9 1.7 1.2 2.6.7l.3-.2c1.4-.8 3.1.2 3.1 1.8v.4c0 1 .9 1.9 1.9 1.9h1.3c1 0 1.9-.9 1.9-1.9v-.4c0-1.6 1.7-2.6 3.1-1.8l.3.2c.9.5 2.1.2 2.6-.7l.6-1.1c.5-.9.2-2.1-.7-2.6l-.3-.2c-1.4-.8-1.4-2.8 0-3.6l.3-.2c.9-.5 1.2-1.7.7-2.6z"/><circle cx="12" cy="12" r="2.8"/>',
   leaf: '<path d="M5 19c0-9 6-14 14-14 0 8-5 14-14 14z"/><path d="M5 19l7-7"/>',
   bolt: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
-  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+  search: '<circle cx="11.2" cy="11.2" r="7.6"/><path d="M16.6 16.9l4 4"/>',
   up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   back: '<path d="M15 5l-7 7 7 7"/>',
   more: '<circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/>',
   check: '<path d="M5 12l5 5 9-10"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
-  spark: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>',
-  compose: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  spark: '<path d="M12 2.8c.6 4.6 2.8 6.8 7.4 7.4-4.6.6-6.8 2.8-7.4 7.4-.6-4.6-2.8-6.8-7.4-7.4 4.6-.6 6.8-2.8 7.4-7.4z"/><path d="M18.5 16.5c.2 1.6 1 2.4 2.6 2.6-1.6.2-2.4 1-2.6 2.6-.2-1.6-1-2.4-2.6-2.6 1.6-.2 2.4-1 2.6-2.6z"/>',
+  compose: '<path d="M13.5 20.5h7"/><path fill-rule="evenodd" d="M12.6 4.1c.9-1.1 2.4-1.3 3.5-.4l1.9 1.5c1.1.9 1.3 2.4.5 3.5L9.1 20c-.4.5-.9.7-1.5.7l-3.6.1-.8-3.5c-.2-.6 0-1.2.4-1.7z"/><path d="M11.2 5.9l5.6 4.3"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   redo: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
   stop: '<rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none"/>',
-  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  trash: '<path d="M19.3 9.5s-.5 6.6-.8 9.4c-.1 1.3-.9 2.1-2.3 2.1-2.6.1-5.2.1-7.8 0-1.3 0-2.1-.8-2.3-2.1-.3-2.8-.8-9.4-.8-9.4"/><path d="M20.7 6.3H3.3M17.3 6.3c-.8 0-1.5-.6-1.6-1.4l-.2-1.1c-.1-.6-.7-1-1.3-1H9.8c-.6 0-1.2.4-1.3 1l-.2 1.1c-.1.8-.8 1.4-1.6 1.4"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/>',
-  link: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
+  link: '<path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M20.5 16l-5-5-8.5 8.5"/>',
   film: '<rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/>',
   pen: '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
@@ -27,18 +27,18 @@ const P: Record<string, string> = {
   list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18" r="1" fill="currentColor"/>',
   map: '<path d="M9 4L3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5z"/><path d="M9 4v13M15 6.5v13"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
-  star: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z"/>',
+  star: '<path fill-rule="evenodd" d="M13.1 3.6l2.1 4.2c.2.4.6.7 1 .8l4.6.7c1 .1 1.4 1.4.7 2.1l-3.4 3.2c-.3.3-.5.8-.4 1.2l.8 4.6c.2 1-.9 1.8-1.8 1.3L12.6 19.6c-.4-.2-.8-.2-1.2 0l-4.1 2.2c-.9.5-2-.3-1.8-1.3l.8-4.6c.1-.4-.1-.9-.4-1.2L2.5 11.4c-.7-.7-.3-2 .7-2.1l4.6-.7c.4-.1.8-.4 1-.8l2.1-4.2c.4-.9 1.8-.9 2.2 0z"/>',
   starf: '<path d="M12 3.5l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.8l-5.2 2.7 1-5.8-4.2-4.1 5.8-.8z" fill="currentColor"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h10"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
   right: '<path d="M9 5l7 7-7 7"/>',
   thumb: '<path d="M7 11v9H4v-9zM7 11l4-8a2 2 0 0 1 2.6 1.9L13 9h5.5a2 2 0 0 1 2 2.4l-1.4 6.6A2.5 2.5 0 0 1 16.7 20H7"/>',
   doc: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
-  side: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16"/>',
-  crown: '<path d="M4 8l4 4 4-7 4 7 4-4-2 10H6z"/>',
+  clock: '<path fill-rule="evenodd" d="M21.2 12c0 5.1-4.1 9.2-9.2 9.2S2.8 17.1 2.8 12 6.9 2.8 12 2.8s9.2 4.1 9.2 9.2z"/><path d="M15.4 14.9L12 12.9V8.4"/>',
+  folder: '<path fill-rule="evenodd" d="M21.5 15.2c0 4-2.4 6.3-6.4 6.3H8.4c-4 0-6.4-2.3-6.4-6.3V8.6C2 4.7 3.5 2.5 7.4 2.5h2.2c.8 0 1.6.4 2.1 1l1 1.3c.5.6 1.2 1 2.1 1h3.1c4 0 3.6 3.2 3.6 7.2z"/><path d="M7 15h10"/>',
+  plug: '<path d="M9 2.8v4.4M15 2.8v4.4"/><path d="M5.8 7.2h12.4v3.6c0 3.4-2.8 6.2-6.2 6.2s-6.2-2.8-6.2-6.2z"/><path d="M12 17v4.2"/>',
+  side: '<path fill-rule="evenodd" d="M16.3 2.8H7.7c-3 0-4.9 2.1-4.9 5.1v8.2c0 3 1.9 5.1 4.9 5.1h8.6c3 0 4.9-2.1 4.9-5.1V7.9c0-3-1.9-5.1-4.9-5.1z"/><path d="M9.2 2.9v18.2"/>',
+  crown: '<path fill-rule="evenodd" d="M3.5 8.6l3.8 3.2 3.9-6.3c.4-.6 1.2-.6 1.6 0l3.9 6.3 3.8-3.2c.6-.5 1.5 0 1.4.8l-1.3 8.4c-.2 1.5-1.5 2.6-3 2.6H6.4c-1.5 0-2.8-1.1-3-2.6L2.1 9.4c-.1-.8.8-1.3 1.4-.8z"/>',
   play: '<path d="M7 5l12 7-12 7z"/>',
   cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
 }
@@ -46,5 +46,15 @@ export function Icon({ n, s = 22, w = 1.9, c = 'currentColor' }: { n: string; s?
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth={w}
       strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: P[n] }} />
+  )
+}
+
+/** 玻璃拟态图标：后面一块彩色底，前面一片磨砂玻璃，图标在玻璃上。 */
+export function GlassIcon({ n, tone = 'coral', s = 34 }: { n: string; tone?: string; s?: number }) {
+  return (
+    <span className={`gi ${tone}`} style={{ width: s, height: s }}>
+      <span className="gi-back" />
+      <span className="gi-front"><Icon n={n} s={Math.round(s * 0.52)} w={1.8} c="#fff" /></span>
+    </span>
   )
 }

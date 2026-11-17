@@ -1,4 +1,8 @@
-# 栖语 Lumi 后端：Sub2API
+# 栖语 Lumi 后端
+
+> 当前线上用的是 `worker/`：Cloudflare Worker，https://api.qigai.tech，三个模型都转 DeepSeek 官方 `deepseek-flash`（V4.1 Flash），服务端注入身份提示词。部署：`cd worker && wrangler secret put DEEPSEEK_KEY && wrangler secret put LUMI_KEY && wrangler deploy`。下面是以后换 Sub2API（会员、计费）时的方案。
+
+## Sub2API
 
 App 只认三个模型 `helium` / `neon` / `argon` 和三档会员 Pro / Max / Ultra。全部用 [Sub2API](https://github.com/Wei-Shaw/sub2api)（LGPL-3.0）原生功能实现，不改它的源码。
 本目录的 `docker-compose.yml`、`.env.example` 拷自 Sub2API `deploy/`（上游提交 15871f9），`docker-compose.override.yml` 是我们加的跨域配置。

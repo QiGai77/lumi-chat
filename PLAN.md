@@ -116,3 +116,15 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 - 技能 = 原智能体预设。项目：名称 + 项目说明（注入 system），项目内新建对话。MCP：添加 Streamable HTTP 服务器，initialize + tools/list 读取工具（对话内调用工具待做）。定时任务：时间 + 星期 + 提示词，App 打开时每 30 秒检查到点执行，错过 6 小时内补跑，结果存成新对话。
 - 我的：头像卡、套餐卡（管理/升级）、升级会员 / 收藏 / 设置。
 - 2026-11-17 19:50 完成，编译通过，Playwright 截图自测（design/v10/）。tag v0.10。
+
+---
+
+# v0.11 后端 + 液态玻璃（用户 2026-11-17 19:40）
+
+需求：三个模型暂时都映射到 DeepSeek V4.1 Flash（官方 API），前端只显示 Helium/Neon/Argon，内置提示词让模型无论怎么问都只认这个名字；界面参考 Figma：Apple Liquid Glass iOS 26 Control Center、Iconly、Glassmorphism Glass Icon Set、Modern Galaxy Folder；MCP 卡片加官网和官网头像。
+
+- 后端：`server/worker/`（Cloudflare Worker `lumi-api`，自定义域 https://api.qigai.tech）。helium/neon/argon → `deepseek-flash`；身份提示词在服务端注入；流里的 model 字段换回公开名；上游报错里的模型名也替换。深度思考开关 → `thinking: enabled/disabled`。密钥 DEEPSEEK_KEY、LUMI_KEY 存为 Worker secret，不进仓库。App 默认网关改为 api.qigai.tech。
+- 以后上 Sub2API 时，把三条路由的 upstream_model 填 `deepseek-flash`（target_platform deepseek）即可，身份提示词需要另加（Sub2API 不注入）。
+- 界面：Iconly 风格重画主要图标；玻璃图标（彩色底块 + 磨砂玻璃前片）用于侧栏、我的、空状态；侧栏 / 输入卡 / 卡片加液态玻璃高光；文件夹悬停或按住时纸张抽出、前盖前倾。
+- MCP：官网（可填，默认从地址推断，去掉 mcp./api. 前缀）+ 官网 favicon（加载失败回退首字母），状态点放在头像角上。
+- 2026-11-17 自测通过（design/v11/），tag v0.11。

@@ -1,7 +1,7 @@
 /** 项目、MCP 服务器、定时任务：都只存本机 localStorage。 */
 export interface Project { id: string; name: string; instructions: string; tone: 'coral' | 'sage' | 'gold' | 'plum'; created: number }
 export interface McpTool { name: string; description?: string }
-export interface McpServer { id: string; name: string; url: string; token: string; enabled: boolean; tools: McpTool[]; status: 'unknown' | 'ok' | 'error'; error?: string }
+export interface McpServer { id: string; name: string; url: string; site?: string; token: string; enabled: boolean; tools: McpTool[]; status: 'unknown' | 'ok' | 'error'; error?: string }
 export interface Task { id: string; name: string; prompt: string; time: string; days: number[]; enabled: boolean; lastRun?: number; lastConv?: string }
 
 const load = <T,>(k: string): T[] => { try { return JSON.parse(localStorage.getItem(k) || '[]') } catch { return [] } }
@@ -46,7 +46,7 @@ async function rpc(s: McpServer, body: object, session?: string): Promise<{ json
   return { json: JSON.parse(text), session: sid }
 }
 export async function probeMcp(s: McpServer): Promise<McpTool[]> {
-  const init = await rpc(s, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lumi-chat', version: '0.10' } } })
+  const init = await rpc(s, { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lumi-chat', version: '0.11' } } })
   if (init.json?.error) throw new Error(init.json.error.message || '初始化失败')
   await rpc(s, { jsonrpc: '2.0', method: 'notifications/initialized' }, init.session).catch(() => null)
   const list = await rpc(s, { jsonrpc: '2.0', id: 2, method: 'tools/list' }, init.session)
