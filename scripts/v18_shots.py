@@ -89,8 +89,15 @@ CONVS = [{"id": "c1", "title": "周末露营装备清单", "tier": "neon", "upda
   {"id": "c2", "title": "解释一下 do-while", "tier": "helium", "updated": 1763300000000, "messages": [{"role": "user", "content": "do-while 和 while 有什么区别"}]}]
 
 async def shot(pg, name, full=False):
+    """full=True：内容在 .scroll 里滚动，整页截图截不到，临时把视口拉高到内容高度再截。"""
     path = os.path.join(OUT, name)
-    await pg.screenshot(path=path, full_page=full)
+    vp = pg.viewport_size
+    if full:
+        h = await pg.evaluate("() => Math.max(...[...document.querySelectorAll('.page .scroll')].map(e => e.scrollHeight))")
+        await pg.set_viewport_size({"width": vp["width"], "height": max(vp["height"], min(int(h), 4000))}); await pg.wait_for_timeout(300)
+    await pg.screenshot(path=path)
+    if full:
+        await pg.set_viewport_size(vp); await pg.wait_for_timeout(200)
     over = await pg.evaluate(OVERFLOW)
     print(f'{name}: overflow={over}')
 
