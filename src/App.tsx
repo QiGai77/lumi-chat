@@ -159,7 +159,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClo
           </div>))}
       </div>
       <button className={`s-me ${view === 'me' || view === 'wallet' || view === 'settings' || view === 'fav' ? 'on' : ''}`} onClick={() => go('me')}>
-        <span className="avatar sm">{USER_NAME[0]}</span>
+        <span className="avatar sm"><Icon n="user" s={20} w={1.8} c="#fff" /></span>
         <div className="grow"><div className="b">{USER_FULL}</div><div className="t12">{plan || 'Free'}</div></div>
         {!plan && <span className="up-tag">升级</span>}
       </button>
@@ -174,7 +174,7 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
   return (
     <section className="fade">
       <div className="me-card">
-        <span className="avatar lg">{USER_NAME[0]}</span>
+        <span className="avatar lg"><Icon n="user" s={34} w={1.6} c="#fff" /></span>
         <div className="grow"><div className="me-n serif">{USER_FULL}</div><div className="t13">{ok ? '已连接网关' : '还没连接网关'}</div></div>
       </div>
       <div className="acct big" style={{ marginTop: 14 }}>
@@ -245,13 +245,16 @@ function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f
 function siteOf(u: string) {
   try { const h = new URL(u.includes('://') ? u : 'https://' + u).hostname; return /^\d+\.\d+\.\d+\.\d+$|^localhost$/.test(h) ? h : h.replace(/^(mcp|api|server|gateway)\d*\./, '') } catch { return u }
 }
-function Favicon({ site, name, status }: { site: string; name: string; status: McpServer['status'] }) {
+function Favicon({ site, status }: { site: string; name?: string; status: McpServer['status'] }) {
+  return <FaviconImpl site={site} status={status} />
+}
+function FaviconImpl({ site, status }: { site: string; status: McpServer['status'] }) {
   const srcs = [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
   const [i, setI] = useState(0)
   return (
     <span className="fav">
       {i < srcs.length ? <img src={srcs[i]} alt="" onError={() => setI(i + 1)} onLoad={e => { if ((e.target as HTMLImageElement).naturalWidth < 2) setI(i + 1) }} />
-        : <b>{(name || site)[0]?.toUpperCase()}</b>}
+        : <GlassIcon n="plug" tone="sky" s={34} />}
       <span className={`st-dot ${status}`} />
     </span>
   )
@@ -459,6 +462,11 @@ function Folder({ tone, title, meta, time, sheets, onClick, onLong }: {
         <div className="f-sheet s3">{sheets[2]}</div>
       </div>
       <div className="f-front">
+        <div className="f-ghost" aria-hidden><div className="f-sheets">
+          <div className="f-sheet s1">{sheets[0]}</div>
+          <div className="f-sheet s2 mono">{sheets[1]}</div>
+          <div className="f-sheet s3">{sheets[2]}</div>
+        </div></div>
         <div className="f-title serif ell">{title}</div>
         <div className="f-meta"><span>{meta}</span><span>{time}</span></div>
       </div>

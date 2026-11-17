@@ -492,3 +492,23 @@ button.row{width:100%;text-align:left}
 .fav .st-dot{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border:2px solid #fff;box-shadow:none}
 .site-link{display:block;color:var(--label2);text-decoration:none}
 .site-link:active{color:var(--accent)}
+/* v0.11.1 文件夹前盖：磨砂玻璃，透出后面的纸张 */
+.f-front{background:linear-gradient(170deg,color-mix(in srgb,var(--f1) 45%,rgba(255,255,255,.62)) 0%,color-mix(in srgb,var(--f2) 78%,transparent) 100%);
+  backdrop-filter:blur(26px) saturate(180%);-webkit-backdrop-filter:blur(26px) saturate(180%);
+  box-shadow:inset 0 1.5px 0 rgba(255,255,255,.85),inset 0 0 0 1px rgba(255,255,255,.35),inset 0 -20px 40px -20px color-mix(in srgb,var(--f2) 60%,transparent),0 -6px 18px -8px rgba(60,20,10,.22)}
+.f-front::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(90% 70% at 15% 0%,rgba(255,255,255,.45),transparent 60%)}
+.f-front>*{position:relative}
+.f-title,.f-meta{text-shadow:0 1px 3px color-mix(in srgb,var(--f2) 70%,transparent)}
+.f-sheets{height:150px}
+.f-sheet{height:118px}
+.fav .gi{position:absolute;inset:5px}
+.avatar{display:inline-grid;place-items:center}
+/* 磨砂：前盖里放一份模糊的纸张副本，和后面的纸张对齐，不依赖 backdrop-filter */
+.folder{--fh:.62}
+@media (min-width:980px){.folder{--fh:.56}}
+.f-front{overflow:hidden;background:color-mix(in srgb,var(--f2) 55%,#fff 45%);backdrop-filter:none;-webkit-backdrop-filter:none}
+.f-ghost{position:absolute;left:0;right:0;bottom:0;height:calc(100% / var(--fh));filter:blur(9px) saturate(130%);opacity:.95;pointer-events:none;z-index:0}
+.f-front::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;z-index:1;
+  background:linear-gradient(175deg,color-mix(in srgb,var(--f1) 42%,rgba(255,255,255,.38)) 0%,color-mix(in srgb,var(--f2) 72%,transparent) 100%)}
+.f-front::before{z-index:2}
+.f-front>.f-title,.f-front>.f-meta{position:relative;z-index:3}
