@@ -39,6 +39,8 @@ public class PhonePlugin extends Plugin {
 
     @Override public void load() {
         LumiPair.listener = (state, msg) -> { JSObject o = new JSObject(); o.put("state", state); o.put("msg", msg); notifyListeners("adb", o); };
+        // v0.17：Flow 的 AI 视觉步把截图和元素列表交给 JS 调模型，JS 用 flowVisionAnswer 回传
+        LumiFlow.visionSink = req -> { try { notifyListeners("flowVision", JSObject.fromJSONObject(req)); } catch (Exception ignored) { } };
     }
 
     private Context ctx() { return getContext(); }
@@ -88,12 +90,18 @@ public class PhonePlugin extends Plugin {
         LumiA11yService s = svc(call); if (s == null) return;
         final String name = call.getString("name", "Flow");
         final org.json.JSONArray steps = call.getArray("steps", new JSArray());
+        final org.json.JSONObject vars = call.getObject("vars", new JSObject());
         LumiAdb.IO.execute(() -> {
-            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", true)))); }
+            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", true), vars))); }
             catch (Throwable e) { call.reject("Flow 运行出错：" + e.getMessage()); }
         });
     }
-    @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) s.flow.stop = true; call.resolve(); }
+    @PluginMethod public void flowVisionAnswer(PluginCall call) {
+        LumiA11yService s = LumiA11yService.instance;
+        if (s != null && s.flow != null) s.flow.answerVision(call.getData());
+        call.resolve();
+    }
+    @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) { s.flow.stop = true; s.flow.cancelVision(); } call.resolve(); }
     @PluginMethod public void recordStart(PluginCall call) {
         LumiA11yService s = svc(call); if (s == null) return;
         s.flow.recordStart(call.getString("pkg", ""), call.getString("app", ""));

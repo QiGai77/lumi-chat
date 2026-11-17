@@ -1,17 +1,22 @@
 package tech.qigai.lumi;
 
+import android.accessibilityservice.AccessibilityService;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.HardwareBuffer;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -23,13 +28,13 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.util.ArrayDeque;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
-import java.util.Deque;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -37,8 +42,9 @@ import java.util.concurrent.TimeUnit;
  * 步骤 JSON：{kind: launch|tap|input|enter|scroll|swipe|key|wait|sleep|if|else|endif|while|endwhile|do|dowhile|for|endfor|break|continue|set|call,
  * sel:{id,text,desc,cls}, x,y(0-1 比例), text, pkg, key, forward, ms, optional, confirm, note,
  * cond:{kind:exists|not_exists|text|var, sel, text, var, op, value}, var, value, from, to, step, max, flowId, pointVar}
- * v0.16：run() 是 pc 循环解释器（控制栈 + 变量表 + 循环保护）；fast=true 时缩短步间等待与轮询间隔。
- * 快速模式目标口径：缓存选择器的步骤 ≤1 秒/步（launch 与页面加载不计入）。
+ * v0.17：解释器移到 FlowVm（纯 Java，可在 JVM 单测），新增 ai 步（缓存选择器原生命中 / 未命中走 AI 视觉）、
+ * new/bind/unbind（类与方法）。fast=true 时缩短步间等待与轮询间隔。
+ * 快速模式目标口径：原生或缓存选择器的步骤 ≤1 秒/步（launch 与页面加载不计入）；AI 视觉未命中的步要一次模型往返。
  */
 public class LumiFlow {
     private final LumiA11yService s;
@@ -46,10 +52,8 @@ public class LumiFlow {
     private View bar; private TextView barText; private TextView btnA, btnB;
     volatile boolean stop = false;
     private volatile CountDownLatch waitUser; private volatile boolean userOk;
-    // v0.16 解释器状态（每次 run() 开始时重置）
-    private boolean fast = false;
-    private final Map<String, Object> vars = new HashMap<>();
-    private JSONArray stepMs;
+    // 快速模式（每次 run() 开始时设置）：缩短步间等待与轮询间隔
+    private volatile boolean fast = false;
 
     // 录制
     volatile boolean recording = false;
@@ -185,447 +189,222 @@ public class LumiFlow {
         return r == null ? null : r.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
     }
 
-    static String condLabel(JSONObject c) {
-        if (c == null) return "";
-        switch (c.optString("kind")) {
-            case "exists": return "出现「" + selText(c.optJSONObject("sel")) + "」";
-            case "not_exists": return "没有「" + selText(c.optJSONObject("sel")) + "」";
-            case "text": return "屏幕包含「" + c.optString("text") + "」";
-            case "var": return c.optString("var") + " " + c.optString("op", "==") + " " + c.optString("value");
-            default: return "";
-        }
-    }
-    private static String selText(JSONObject sel) {
-        if (sel == null) return "";
-        String t = sel.optString("text", sel.optString("desc", ""));
-        return t.isEmpty() ? sel.optString("id", "") : t;
-    }
+    /* ---------------- 运行（v0.17：解释器在 FlowVm，这里是真机宿主 + AI 视觉） */
+    static String label(JSONObject st) { return FlowVm.label(st); }
 
-    static String label(JSONObject st) {
-        String k = st.optString("kind"); JSONObject sel = st.optJSONObject("sel");
-        String what = sel == null ? "" : sel.optString("text", sel.optString("desc", ""));
-        if (!st.optString("note").isEmpty()) return st.optString("note");
-        switch (k) {
-            case "launch": return "打开 " + st.optString("app", st.optString("pkg"));
-            case "tap": return "点击" + (st.has("pointVar") ? "变量点 " + st.optString("pointVar") : what.isEmpty() ? "" : "「" + what + "」");
-            case "input": return "输入「" + st.optString("text") + "」";
-            case "enter": return "回车 / 搜索";
-            case "scroll": return st.optBoolean("forward", true) ? "向下滚动" : "向上滚动";
-            case "swipe": return "滑动";
-            case "key": return "按键 " + st.optString("key");
-            case "wait": return "等待「" + what + "」出现";
-            case "sleep": return "等 " + st.optInt("ms", 1000) / 1000.0 + " 秒";
-            case "if": return "如果 " + condLabel(st.optJSONObject("cond"));
-            case "else": return "否则";
-            case "endif": return "条件结束";
-            case "while": return "循环：当 " + condLabel(st.optJSONObject("cond"));
-            case "endwhile": return "循环结束";
-            case "do": return "先执行一次";
-            case "dowhile": return "重复执行，直到不满足 " + condLabel(st.optJSONObject("cond"));
-            case "for": return "循环 " + st.optString("var") + " 从 " + st.optDouble("from") + " 到 " + st.optDouble("to");
-            case "endfor": return "循环结束";
-            case "break": return "跳出循环";
-            case "continue": return "继续下一轮";
-            case "set": return "设置 " + st.optString("var") + " = " + st.optString("value");
-            case "call": return "调用子流程 " + st.optString("flowId");
-            default: return k;
-        }
-    }
+    /** 刚执行的动作是怎么完成的：native / cache（缓存选择器命中，没调模型）/ vision / coord。 */
+    private volatile String src = "native";
+    private final List<JSONObject> learned = new ArrayList<>();
+    private long visionMs = 0; private int visionCalls = 0;
 
-    /* ---------------- 运行（v0.16 解释器） */
-    /** 控制栈帧：IF{elseSeen, taken}、WHILE{startPc, cond, iter, max}、FOR{var, cur, end, step, startPc}、DO{startPc}。 */
-    private static class Frame {
-        String type; int startPc; boolean elseSeen; boolean taken;
-        JSONObject cond; int iter; int max = 20;
-        String var; double cur, end, step;
-    }
+    JSONObject run(String name, JSONArray steps) { return run(name, steps, false, null); }
 
-    /** 同步执行（在后台线程调用）。返回 {ok, done, total, failedAt, reason, screen, log[], ms, stepMs[]} */
-    JSONObject run(String name, JSONArray steps) { return run(name, steps, false); }
-
-    JSONObject run(String name, JSONArray steps, boolean fastMode) {
+    /** 同步执行（在后台线程调用）。返回 FlowVm 的结果，另加 screen（失败时）、learned（视觉找到、可写回的选择器）、visionMs、visionCalls。 */
+    JSONObject run(final String name, JSONArray steps, boolean fastMode, JSONObject initVars) {
         stop = false;
         fast = fastMode;
-        vars.clear();
-        stepMs = new JSONArray();
-        JSONObject res = new JSONObject();
-        JSONArray log = new JSONArray();
-        int n = steps.length();
-        long t0 = System.currentTimeMillis();
-        int executed = 0;
-        Deque<Frame> stack = new ArrayDeque<>();
-        try {
-            res.put("total", n);
-            int pc = 0;
-            while (pc < n && !stop) {
-                if (++executed > MAX_EXEC_STEPS) return fail(res, log, pc, executed, "执行步数超过 " + MAX_EXEC_STEPS + " 步，可能死循环", name, t0);
-                JSONObject st = steps.getJSONObject(pc);
-                String kind = st.optString("kind");
-                final String lb = label(st);
-                showBar(name + " · " + (pc + 1) + "/" + n + " " + lb, null, null, "停止", () -> stop = true);
-                long st0 = System.currentTimeMillis();
-                // ---- 控制流步：不发给 step()，直接改 pc ----
-                if (isControl(kind)) {
-                    int next = control(st, steps, pc, stack, lb);
-                    if (next < 0) return fail(res, log, pc, executed, controlError, name, t0);
-                    stepMs.put(System.currentTimeMillis() - st0);
-                    if (!isSilentControl(kind)) log.put(lb + " · " + (System.currentTimeMillis() - st0) + "ms");
-                    pc = next;
-                    continue;
-                }
-                if (st.optBoolean("confirm")) {
-                    waitUser = new CountDownLatch(1); userOk = false;
-                    showBar("确认：" + lb + "？", "继续", () -> { userOk = true; waitUser.countDown(); }, "停止", () -> { stop = true; waitUser.countDown(); });
-                    waitUser.await(10, TimeUnit.MINUTES);
-                    if (!userOk) { stop = true; break; }
-                }
-                String err = step(st);
-                long took = System.currentTimeMillis() - st0;
-                stepMs.put(took);
-                if (err != null && st.optBoolean("optional")) { log.put("跳过：" + lb + " · " + took + "ms"); pc++; continue; }
-                if (err != null) return fail(res, log, pc, executed, lb + "：" + err, name, t0);
-                log.put(lb + " · " + took + "ms");
-                sleep(st.optInt("after", fast ? 120 : 450));
-                pc++;
+        synchronized (learned) { learned.clear(); }
+        visionMs = 0; visionCalls = 0;
+        dropPrefetch();
+        FlowVm vm = new FlowVm();
+        vm.fast = fastMode;
+        FlowVm.Host h = new FlowVm.Host() {
+            @Override public boolean stopped() { return stop; }
+            @Override public void progress(int pc, int total, String lb) {
+                showBar(name + " · " + (pc + 1) + "/" + total + " " + lb, null, null, "停止", () -> { stop = true; cancelVision(); });
             }
-            res.put("ok", !stop); res.put("done", executed); res.put("log", log);
-            res.put("ms", System.currentTimeMillis() - t0); res.put("stepMs", stepMs);
-            if (stop) res.put("reason", "用户停止了");
-            showBar(stop ? "已停止" : name + " 完成", null, null, null, null);
-            hideBar(1800);
-        } catch (Exception e) {
-            try { res.put("ok", false); res.put("reason", String.valueOf(e.getMessage())); res.put("failedAt", 0); res.put("ms", System.currentTimeMillis() - t0); res.put("stepMs", stepMs); } catch (Exception ignored) { }
-            hideBar(0);
-        }
-        return res;
-    }
-
-    private static final int MAX_EXEC_STEPS = 500;
-    private String controlError = "";
-
-    private JSONObject fail(JSONObject res, JSONArray log, int pc, int executed, String reason, String name, long t0) {
+            @Override public boolean confirm(String lb) {
+                waitUser = new CountDownLatch(1); userOk = false;
+                showBar("确认：" + lb + "？", "继续", () -> { userOk = true; waitUser.countDown(); }, "停止", () -> { stop = true; waitUser.countDown(); });
+                try { waitUser.await(10, TimeUnit.MINUTES); } catch (InterruptedException ignored) { }
+                if (!userOk) stop = true;
+                return userOk;
+            }
+            @Override public boolean exists(JSONObject sel, long waitMs) { return waitMs > 0 ? waitFind(sel, waitMs) != null : find(sel) != null; }
+            @Override public String screenText() { return s.dump(120); }
+            @Override public String act(JSONObject st, int pc) { src = "native"; return step(st); }
+            @Override public String lastSrc() { return src; }
+            @Override public void settle(long ms) { sleep(ms); }
+            @Override public void prefetch(JSONObject next) { maybePrefetch(next); }
+        };
+        JSONObject res = vm.run(steps, initVars, h);
         try {
-            res.put("ok", false); res.put("failedAt", pc); res.put("reason", reason);
-            res.put("screen", s.dump(120)); res.put("done", executed); res.put("log", log);
-            res.put("ms", System.currentTimeMillis() - t0); res.put("stepMs", stepMs);
+            JSONArray l = new JSONArray(); synchronized (learned) { for (JSONObject o : learned) l.put(o); }
+            res.put("learned", l); res.put("visionMs", visionMs); res.put("visionCalls", visionCalls);
+            if (res.optBoolean("ok")) { showBar(name + " 完成", null, null, null, null); hideBar(1800); }
+            else if (stop) { showBar("已停止", null, null, null, null); hideBar(1800); }
+            else {
+                res.put("screen", s.dump(120));
+                showBar("Flow 卡在第 " + (res.optInt("failedAt") + 1) + " 步：" + res.optString("reason"), null, null, "关闭", () -> hideBar(0));
+                hideBar(6000);
+            }
         } catch (Exception ignored) { }
-        showBar("Flow 卡在第 " + (pc + 1) + " 步：" + reason, null, null, "关闭", () -> hideBar(0));
-        hideBar(6000);
+        dropPrefetch();
         return res;
     }
 
-    private static boolean isControl(String kind) {
-        switch (kind) {
-            case "if": case "else": case "endif": case "while": case "endwhile":
-            case "do": case "dowhile": case "for": case "endfor":
-            case "break": case "continue": case "set": case "call":
-                return true;
-            default: return false;
-        }
-    }
-    /** 块结束步不记 log（太吵），其余控制步记一条。 */
-    private static boolean isSilentControl(String kind) {
-        return kind.equals("endif") || kind.equals("endwhile") || kind.equals("endfor");
+    /* ---------------- AI 视觉（v0.17）
+     * 缓存命中：ai 步带着上次学到的 sel，直接走无障碍原生查找，不调模型（目标 ≤1 秒/步）。
+     * 未命中：截屏（长边缩到 720px、JPEG q60）+ 精简元素列表发给 JS，JS 用 Helium（关闭思考、max_tokens 很小、只要 JSON）
+     * 定位后回传元素编号或 0-1 坐标；找到的选择器记进 learned，由 JS 写回 Flow，下次走原生。
+     * 视觉未命中这一步一定要一次模型往返，耗时取决于网络和模型，不保证 1 秒。 */
+    interface VisionSink { void emit(JSONObject req); }
+    static volatile VisionSink visionSink;
+    private volatile CountDownLatch visionWait;
+    private volatile JSONObject visionAns;
+    private volatile String visionId = "";
+    private final ExecutorService shotExec = Executors.newSingleThreadExecutor();
+    private final ExecutorService shotCb = Executors.newSingleThreadExecutor();
+    private volatile Future<String> prefetchShot;
+
+    /** 停止时别让视觉步干等。 */
+    void cancelVision() { CountDownLatch l = visionWait; if (l != null) l.countDown(); }
+
+    void answerVision(JSONObject a) {
+        if (a == null || !visionId.equals(a.optString("id"))) return;
+        visionAns = a;
+        CountDownLatch l = visionWait; if (l != null) l.countDown();
     }
 
-    /** 找与 pc 处开块匹配的结束步；else 也算 if 的匹配目标（返回其位置，调用方区分）。 */
-    private int findMatch(JSONArray steps, int pc, String open, String close, String alt) {
-        int depth = 0;
-        for (int i = pc; i < steps.length(); i++) {
-            String k;
-            try { k = steps.getJSONObject(i).optString("kind"); } catch (Exception e) { continue; }
-            if (k.equals(open)) depth++;
-            else if (alt != null && k.equals(alt) && depth == 1) return i;
-            else if (k.equals(close)) { depth--; if (depth == 0) return i; }
-        }
-        return -1;
-    }
-    private int loopEndPc(JSONArray steps, Frame f) {
-        switch (f.type) {
-            case "WHILE": return findMatch(steps, f.startPc, "while", "endwhile", null);
-            case "FOR": return findMatch(steps, f.startPc, "for", "endfor", null);
-            default: return findMatch(steps, f.startPc, "do", "dowhile", null); // DO
-        }
+    /** 截屏 → 长边缩到 720px → JPEG q60 → base64。无障碍截屏要 Android 11（API 30）以上，更早的系统返回 null（只发元素列表）。 */
+    private String shot() {
+        if (Build.VERSION.SDK_INT < 30) return null;
+        final String[] out = { null };
+        final CountDownLatch l = new CountDownLatch(1);
+        try {
+            s.takeScreenshot(Display.DEFAULT_DISPLAY, shotCb, new AccessibilityService.TakeScreenshotCallback() {
+                @Override public void onSuccess(AccessibilityService.ScreenshotResult r) {
+                    try {
+                        HardwareBuffer hb = r.getHardwareBuffer();
+                        Bitmap hw = Bitmap.wrapHardwareBuffer(hb, r.getColorSpace());
+                        if (hw != null) {
+                            Bitmap sw = hw.copy(Bitmap.Config.ARGB_8888, false);
+                            int w = sw.getWidth(), ht = sw.getHeight();
+                            float k = Math.min(1f, 720f / Math.max(w, ht));
+                            Bitmap sc = k < 1f ? Bitmap.createScaledBitmap(sw, Math.max(1, Math.round(w * k)), Math.max(1, Math.round(ht * k)), true) : sw;
+                            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                            sc.compress(Bitmap.CompressFormat.JPEG, 60, bo);
+                            out[0] = Base64.encodeToString(bo.toByteArray(), Base64.NO_WRAP);
+                            if (sc != sw) sc.recycle();
+                            sw.recycle(); hw.recycle();
+                        }
+                        hb.close();
+                    } catch (Throwable ignored) { }
+                    l.countDown();
+                }
+                @Override public void onFailure(int code) { l.countDown(); }
+            });
+            l.await(1500, TimeUnit.MILLISECONDS);
+        } catch (Throwable ignored) { }
+        return out[0];
     }
 
-    /**
-     * 执行一步控制流，返回下一个 pc；出错返回 -1（原因写 controlError）。
-     * 循环保护：单循环迭代 > max（默认 20，步上用 max 覆盖）即失败；嵌套超过 8 层失败。
-     */
-    private int control(JSONObject st, JSONArray steps, int pc, Deque<Frame> stack, String lb) {
-        String kind = st.optString("kind");
-        controlError = "";
-        switch (kind) {
-            case "if": {
-                JSONObject cond = st.optJSONObject("cond");
-                if (cond == null) { controlError = lb + "：缺少 cond 条件"; return -1; }
-                if (evalCond(cond)) {
-                    Frame f = new Frame(); f.type = "IF"; f.startPc = pc; f.taken = true; stack.push(f);
-                    return pc + 1;
-                }
-                int els = findMatch(steps, pc, "if", "endif", "else");
-                if (els < 0) { controlError = lb + "：没有对应的 endif"; return -1; }
-                String k;
-                try { k = steps.getJSONObject(els).optString("kind"); } catch (Exception e) { k = ""; }
-                if (k.equals("else")) {
-                    Frame f = new Frame(); f.type = "IF"; f.startPc = pc; f.taken = false; f.elseSeen = true; stack.push(f);
-                    return els + 1;
-                }
-                return els + 1;
-            }
-            case "else": {
-                Frame f = stack.peek();
-                if (f == null || !f.type.equals("IF")) { controlError = lb + "：没有对应的 if"; return -1; }
-                if (f.taken) {
-                    int end = findMatch(steps, f.startPc, "if", "endif", null);
-                    stack.pop();
-                    return end < 0 ? steps.length() : end + 1;
-                }
-                return pc + 1;
-            }
-            case "endif": {
-                Frame f = stack.peek();
-                if (f == null || !f.type.equals("IF")) { controlError = lb + "：没有对应的 if"; return -1; }
-                stack.pop();
-                return pc + 1;
-            }
-            case "while": {
-                Frame top = stack.peek();
-                if (top != null && top.type.equals("WHILE") && top.startPc == pc) {
-                    // 从 endwhile 跳回：复用已有帧，只重判条件
-                    if (!evalCond(top.cond)) { stack.pop(); int end = findMatch(steps, pc, "while", "endwhile", null); return end < 0 ? steps.length() : end + 1; }
-                    return pc + 1;
-                }
-                if (stack.size() >= 8) { controlError = lb + "：循环嵌套超过 8 层"; return -1; }
-                JSONObject cond = st.optJSONObject("cond");
-                if (cond == null) { controlError = lb + "：缺少 cond 条件"; return -1; }
-                if (!evalCond(cond)) { int end = findMatch(steps, pc, "while", "endwhile", null); return end < 0 ? steps.length() : end + 1; }
-                Frame f = new Frame(); f.type = "WHILE"; f.startPc = pc; f.cond = cond; f.max = st.optInt("max", 20); stack.push(f);
-                return pc + 1;
-            }
-            case "endwhile": {
-                Frame f = stack.peek();
-                if (f == null || !f.type.equals("WHILE")) { controlError = lb + "：没有对应的 while"; return -1; }
-                if (++f.iter > f.max) { controlError = "循环超过 " + f.max + " 次"; return -1; }
-                return f.startPc; // 回到 while 步重判条件
-            }
-            case "do": {
-                if (stack.size() >= 8) { controlError = lb + "：循环嵌套超过 8 层"; return -1; }
-                Frame f = new Frame(); f.type = "DO"; f.startPc = pc; f.max = st.optInt("max", 20); stack.push(f);
-                return pc + 1;
-            }
-            case "dowhile": {
-                Frame f = stack.peek();
-                if (f == null || !f.type.equals("DO")) { controlError = lb + "：没有对应的 do"; return -1; }
-                JSONObject cond = st.optJSONObject("cond");
-                if (cond == null) { controlError = lb + "：缺少 cond 条件"; return -1; }
-                if (evalCond(cond)) {
-                    if (++f.iter > f.max) { controlError = "循环超过 " + f.max + " 次"; return -1; }
-                    return f.startPc + 1; // 回到 do 体开头（至少执行过一次）
-                }
-                stack.pop();
-                return pc + 1;
-            }
-            case "for": {
-                Frame top = stack.peek();
-                if (top != null && top.type.equals("FOR") && top.startPc == pc) {
-                    // 从 endfor/continue 跳回：只判边界，不再初始化
-                    if (pastEnd(top)) { stack.pop(); int end = findMatch(steps, pc, "for", "endfor", null); return end < 0 ? steps.length() : end + 1; }
-                    vars.put(top.var, top.cur);
-                    return pc + 1;
-                }
-                if (stack.size() >= 8) { controlError = lb + "：循环嵌套超过 8 层"; return -1; }
-                if (!st.has("var") || !st.has("from") || !st.has("to")) { controlError = lb + "：for 缺少 var/from/to"; return -1; }
-                double step = st.has("step") ? st.optDouble("step") : (st.optDouble("to") >= st.optDouble("from") ? 1 : -1);
-                if (step == 0) { controlError = lb + "：for 的 step 不能为 0"; return -1; }
-                Frame f = new Frame(); f.type = "FOR"; f.startPc = pc; f.var = st.optString("var");
-                f.cur = st.optDouble("from"); f.end = st.optDouble("to"); f.step = step; f.max = st.optInt("max", 20);
-                if (pastEnd(f)) { int end = findMatch(steps, pc, "for", "endfor", null); return end < 0 ? steps.length() : end + 1; }
-                vars.put(f.var, f.cur);
-                stack.push(f);
-                return pc + 1;
-            }
-            case "endfor": {
-                Frame f = stack.peek();
-                if (f == null || !f.type.equals("FOR")) { controlError = lb + "：没有对应的 for"; return -1; }
-                if (++f.iter > f.max) { controlError = "循环超过 " + f.max + " 次"; return -1; }
-                f.cur += f.step;
-                return f.startPc; // 回到 for 步判边界
-            }
-            case "break": {
-                Frame loop = nearestLoop(stack);
-                if (loop == null) { controlError = lb + "：不在任何循环里"; return -1; }
-                // 弹出直到该循环帧（含）为止的所有帧
-                while (!stack.isEmpty()) { Frame f = stack.pop(); if (f == loop) break; }
-                int end = loopEndPc(steps, loop);
-                return end < 0 ? steps.length() : end + 1;
-            }
-            case "continue": {
-                Frame loop = nearestLoop(stack);
-                if (loop == null) { controlError = lb + "：不在任何循环里"; return -1; }
-                // 先弹出循环体里未闭合的 if 帧（比如 continue 写在 if 块内），再跳回循环头
-                while (!stack.isEmpty() && stack.peek() != loop) stack.pop();
-                switch (loop.type) {
-                    case "WHILE": if (++loop.iter > loop.max) { controlError = "循环超过 " + loop.max + " 次"; return -1; } return loop.startPc;
-                    case "FOR": if (++loop.iter > loop.max) { controlError = "循环超过 " + loop.max + " 次"; return -1; } loop.cur += loop.step; return loop.startPc;
-                    default: { // DO：跳到尾部 dowhile 判条件
-                        int end = loopEndPc(steps, loop);
-                        return end < 0 ? steps.length() : end;
-                    }
-                }
-            }
-            case "set": {
-                if (!st.has("var")) { controlError = lb + "：set 缺少 var"; return -1; }
-                try { vars.put(st.optString("var"), evalValue(st.optString("value", ""))); }
-                catch (Exception e) { controlError = lb + "：变量求值失败"; return -1; }
-                return pc + 1;
-            }
-            case "call": {
-                // TS 侧 runFlow 已用 expandCalls 内联；走到这里说明调用过深或循环调用
-                controlError = lb + "：子流程未展开（调用层数过深或循环调用）";
-                return -1;
-            }
-            default: controlError = "不认识的步骤 " + kind; return -1;
+    private static boolean needsVision(JSONObject st) { return st != null && "ai".equals(st.optString("kind")); }
+
+    /** 下一步是 ai 步：和步后等待并行截图（等界面先动 180ms 再截），省掉视觉步开头的截图时间。 */
+    private void maybePrefetch(JSONObject next) {
+        dropPrefetch();
+        if (!needsVision(next)) return;
+        final long delay = fast ? 180 : 450;
+        try { prefetchShot = shotExec.submit(() -> { sleep(delay); return shot(); }); } catch (Throwable ignored) { }
+    }
+    private void dropPrefetch() { Future<String> f = prefetchShot; prefetchShot = null; if (f != null) f.cancel(false); }
+
+    /** ai 步：先试缓存的选择器（原生，不调模型）；找不到才走视觉。 */
+    private String aiStep(JSONObject st) {
+        String act = st.optString("act", "tap");
+        JSONObject sel = st.optJSONObject("sel");
+        if (sel != null && sel.length() > 0) {
+            AccessibilityNodeInfo n = waitFind(sel, fast ? 600 : 1500);
+            if (n != null) { dropPrefetch(); src = "cache"; return doAct(n, st, act); }
         }
+        return visionAct(st, act, st.optString("goal"));
     }
 
-    private static Frame nearestLoop(Deque<Frame> stack) {
-        for (Frame f : stack) if (f.type.equals("WHILE") || f.type.equals("FOR") || f.type.equals("DO")) return f;
-        return null;
-    }
-    private static boolean pastEnd(Frame f) {
-        return f.step > 0 ? f.cur > f.end : f.cur < f.end;
-    }
-
-    /* ---------------- 条件与变量求值 */
-    private boolean evalCond(JSONObject c) {
-        if (c == null) return false;
-        switch (c.optString("kind")) {
-            case "exists": return find(c.optJSONObject("sel")) != null; // 只查一次，不等待
-            case "not_exists": return find(c.optJSONObject("sel")) == null;
-            case "text": return s.dump(120).contains(c.optString("text", ""));
-            case "var": {
-                Object v = vars.get(c.optString("var"));
-                if (v == null) return false;
-                String rhs = c.optString("value", "");
-                String op = c.optString("op", "==");
-                if (op.equals("contains")) return varString(v).contains(rhs);
-                Double vn = toNum(v), rn = toNum(rhs);
-                if (vn != null && rn != null) {
-                    switch (op) {
-                        case "==": return vn.equals(rn);
-                        case "!=": return !vn.equals(rn);
-                        case ">": return vn > rn;
-                        case "<": return vn < rn;
-                        case ">=": return vn >= rn;
-                        case "<=": return vn <= rn;
-                    }
-                    return false;
-                }
-                String vs = varString(v);
-                switch (op) {
-                    case "==": return vs.equals(rhs);
-                    case "!=": return !vs.equals(rhs);
-                    case ">": return vs.compareTo(rhs) > 0;
-                    case "<": return vs.compareTo(rhs) < 0;
-                    case ">=": return vs.compareTo(rhs) >= 0;
-                    case "<=": return vs.compareTo(rhs) <= 0;
-                    default: return false;
-                }
-            }
-            default: return false;
+    private String doAct(AccessibilityNodeInfo n, JSONObject st, String act) {
+        if ("input".equals(act)) {
+            if (!n.isFocused()) { n.performAction(AccessibilityNodeInfo.ACTION_FOCUS); n.performAction(AccessibilityNodeInfo.ACTION_CLICK); }
+            Bundle b = new Bundle(); b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, st.optString("text"));
+            if (n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) return null;
+            AccessibilityNodeInfo f = focusedInput();
+            return f != null && f.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b) ? null : "输入失败";
         }
-    }
-    private static String varString(Object v) {
-        if (v instanceof JSONObject) {
-            JSONObject o = (JSONObject) v;
-            if (o.has("x") && o.has("y") && o.length() == 2) return o.optDouble("x") + "," + o.optDouble("y");
-            return o.toString();
-        }
-        if (v instanceof Double) { double d = (Double) v; return d == Math.floor(d) ? String.valueOf((long) d) : String.valueOf(d); }
-        return String.valueOf(v);
-    }
-    private static Double toNum(Object v) {
-        if (v instanceof Number) return ((Number) v).doubleValue();
-        if (v instanceof String) { try { return Double.parseDouble((String) v); } catch (NumberFormatException e) { return null; } }
-        return null;
+        return clickNode(n, "long".equals(act) || st.optBoolean("long")) ? null : "点击失败";
     }
 
-    /** set 步 value 求值：${变量} 插值 → struct JSON → point "0.5,0.3" → 数字/四则/字符串拼接 → 原字符串。 */
-    private Object evalValue(String raw) {
-        String t = interp(raw).trim();
-        if (t.isEmpty()) return "";
-        if (t.startsWith("{")) { try { return new JSONObject(t); } catch (Exception ignored) { } }
-        if (t.startsWith("[")) { try { return new JSONArray(t); } catch (Exception ignored) { } }
-        java.util.regex.Matcher pt = java.util.regex.Pattern.compile("^(-?\\d+(?:\\.\\d+)?)\\s*,\\s*(-?\\d+(?:\\.\\d+)?)$").matcher(t);
-        if (pt.matches()) { try { JSONObject o = new JSONObject(); o.put("x", Double.parseDouble(pt.group(1))); o.put("y", Double.parseDouble(pt.group(2))); return o; } catch (Exception ignored) { } }
-        try { return Double.parseDouble(t); } catch (NumberFormatException ignored) { }
-        if (t.contains("+")) {
-            String[] parts = t.split("\\+", -1);
-            StringBuilder sb = new StringBuilder();
-            boolean allKnown = true, anyString = false;
-            for (String p : parts) {
-                String q = p.trim();
-                if (q.length() >= 2 && ((q.startsWith("\"") && q.endsWith("\"")) || (q.startsWith("'") && q.endsWith("'")))) { sb.append(q.substring(1, q.length() - 1)); anyString = true; }
-                else if (vars.containsKey(q)) { sb.append(varString(vars.get(q))); if (!(vars.get(q) instanceof Number)) anyString = true; }
-                else if (q.matches("-?\\d+(\\.\\d+)?")) sb.append(q);
-                else { allKnown = false; break; }
+    private String visionAct(JSONObject st, String act, String goal) {
+        VisionSink sink = visionSink;
+        if (sink == null) return "AI 视觉不可用（需要在栖语 App 里运行 Flow）";
+        if (goal == null || goal.isEmpty()) return "AI 步缺少目标描述";
+        long v0 = System.currentTimeMillis();
+        String img = null;
+        Future<String> f = prefetchShot; prefetchShot = null;
+        if (f != null) { try { img = f.get(1500, TimeUnit.MILLISECONDS); } catch (Throwable ignored) { } }
+        if (img == null) img = shot();
+        String elements = s.dump(60); // 编号与 s.node(i) 对应，回答里的 i 直接拿节点
+        DisplayMetrics m = s.getResources().getDisplayMetrics();
+        String id = System.nanoTime() + "";
+        JSONObject a;
+        try {
+            JSONObject req = new JSONObject();
+            req.put("id", id); req.put("goal", goal); req.put("act", act); req.put("elements", elements);
+            req.put("w", m.widthPixels); req.put("h", m.heightPixels);
+            if (img != null) req.put("image", img);
+            visionAns = null; visionId = id; visionWait = new CountDownLatch(1);
+            sink.emit(req);
+            boolean got = visionWait.await(st.optLong("visionTimeout", 15000), TimeUnit.MILLISECONDS);
+            a = got ? visionAns : null;
+        } catch (Exception e) { a = null; }
+        visionCalls++; visionMs += System.currentTimeMillis() - v0;
+        if (stop) return "用户停止了";
+        if (a == null) return "AI 视觉超时";
+        if (a.has("error")) return "AI 视觉出错：" + a.optString("error");
+        if (a.optBoolean("none")) return "AI 在屏幕上没找到「" + goal + "」";
+        if (a.has("i")) {
+            AccessibilityNodeInfo n = s.node(a.optInt("i", -1));
+            if (n != null) {
+                JSONObject sel = selOf(n);
+                if ("input".equals(act)) sel.remove("text");
+                learn(st, sel, n);
+                src = "vision";
+                return doAct(n, st, act);
             }
-            if (allKnown && anyString) return sb.toString();
         }
-        if (t.matches("[\\d\\s+\\-*/%().A-Za-z_]+")) {
-            String replaced = t;
-            java.util.regex.Matcher m = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*").matcher(t);
-            boolean ok = true;
-            while (m.find()) {
-                String name = m.group();
-                Object v = vars.get(name);
-                if (v == null || !(v instanceof Number)) { ok = false; break; }
-                replaced = replaced.replaceAll("\\b" + java.util.regex.Pattern.quote(name) + "\\b", varString(v));
+        if (a.has("x") && a.has("y")) {
+            double x = a.optDouble("x"), y = a.optDouble("y");
+            if (x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+                learnXY(st, x, y);
+                src = "vision";
+                boolean ok = s.tap((int) (x * m.widthPixels), (int) (y * m.heightPixels), "long".equals(act) ? 700 : 60);
+                if (!ok) return "点击失败";
+                if ("input".equals(act)) {
+                    sleep(fast ? 150 : 400);
+                    AccessibilityNodeInfo n = focusedInput();
+                    if (n == null) return "点了 AI 给的位置，但没有出现输入框";
+                    Bundle b = new Bundle(); b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, st.optString("text"));
+                    return n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b) ? null : "输入失败";
+                }
+                return null;
             }
-            if (ok) { Double d = evalArith(replaced); if (d != null) return d; }
         }
-        return t;
+        return "AI 没给出可用的位置";
     }
-    private String interp(String raw) {
-        StringBuilder sb = new StringBuilder();
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}").matcher(raw);
-        int last = 0;
-        while (m.find()) {
-            sb.append(raw, last, m.start());
-            Object v = vars.get(m.group(1));
-            sb.append(v == null ? "" : varString(v));
-            last = m.end();
-        }
-        sb.append(raw.substring(last));
-        return sb.toString();
+
+    private void learn(JSONObject st, JSONObject sel, AccessibilityNodeInfo n) {
+        if (!st.has("_i") || sel.length() == 0) return;
+        try {
+            JSONObject o = new JSONObject();
+            o.put("i", st.optInt("_i")); o.put("fid", st.optString("_fid")); o.put("sel", sel); ratio(o, n);
+            synchronized (learned) { learned.add(o); }
+        } catch (Exception ignored) { }
     }
-    /** 小型四则求值（+ - * / % 与括号），非法返回 null。 */
-    private static Double evalArith(String expr) {
-        try { return new Arith(expr).parse(); } catch (Exception e) { return null; }
-    }
-    private static class Arith {
-        private final String s; private int i;
-        Arith(String s) { this.s = s; }
-        Double parse() { Double v = add(); skip(); if (i != s.length()) throw new IllegalArgumentException(); return v; }
-        private void skip() { while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++; }
-        private Double num() {
-            skip();
-            if (i < s.length() && s.charAt(i) == '(') { i++; Double v = add(); skip(); if (i >= s.length() || s.charAt(i) != ')') throw new IllegalArgumentException(); i++; return v; }
-            int st = i;
-            if (i < s.length() && s.charAt(i) == '-') i++;
-            while (i < s.length() && (Character.isDigit(s.charAt(i)) || s.charAt(i) == '.')) i++;
-            if (i == st) throw new IllegalArgumentException();
-            return Double.parseDouble(s.substring(st, i));
-        }
-        private Double mul() {
-            Double v = num();
-            for (;;) { skip(); if (i >= s.length()) return v; char op = s.charAt(i); if (op != '*' && op != '/' && op != '%') return v; i++; Double r = num(); if (op == '*') v *= r; else if (op == '/') { if (r == 0) throw new IllegalArgumentException(); v /= r; } else v %= r; }
-        }
-        private Double add() {
-            Double v = mul();
-            for (;;) { skip(); if (i >= s.length()) return v; char op = s.charAt(i); if (op != '+' && op != '-') return v; i++; Double r = mul(); v = op == '+' ? v + r : v - r; }
-        }
+    private void learnXY(JSONObject st, double x, double y) {
+        if (!st.has("_i")) return;
+        try {
+            JSONObject o = new JSONObject();
+            o.put("i", st.optInt("_i")); o.put("fid", st.optString("_fid")); o.put("x", Math.round(x * 1000) / 1000.0); o.put("y", Math.round(y * 1000) / 1000.0);
+            synchronized (learned) { learned.add(o); }
+        } catch (Exception ignored) { }
     }
 
     private String step(JSONObject st) {
@@ -661,23 +440,21 @@ public class LumiFlow {
                 return null;
             }
             case "tap": {
-                // pointVar：指向一个 point 类型变量时按该点坐标点
-                if (st.has("pointVar")) {
-                    Object pv = vars.get(st.optString("pointVar"));
-                    if (pv instanceof JSONObject) {
-                        JSONObject p = (JSONObject) pv;
-                        if (p.has("x") && p.has("y")) {
-                            DisplayMetrics m = s.getResources().getDisplayMetrics();
-                            return s.tap((int) (p.optDouble("x") * m.widthPixels), (int) (p.optDouble("y") * m.heightPixels), st.optBoolean("long") ? 700 : 60) ? null : "点击失败";
-                        }
-                    }
-                    return "变量 " + st.optString("pointVar") + " 不是 point 类型";
-                }
-                AccessibilityNodeInfo n = sel == null ? null : waitFind(sel, timeout);
+                // pointVar 已由 FlowVm 换成 x/y 并标 coordOnly
+                if (st.optBoolean("coordOnly")) { src = "coord"; return tapRatio(st) ? null : "点击失败"; }
+                boolean vision = st.optBoolean("vision");
+                AccessibilityNodeInfo n = sel == null || sel.length() == 0 ? null : waitFind(sel, vision ? Math.min(timeout, fast ? 900 : 2000) : timeout);
                 if (n != null) return clickNode(n, st.optBoolean("long")) ? null : "点击失败";
-                if (st.has("x") && (sel == null || st.optBoolean("coordFallback", true))) return tapRatio(st) ? null : "点击失败";
+                // v0.17：选择器失效时可以让 AI 视觉找（tap 上设 vision:true），找到后选择器写回 Flow
+                if (vision) {
+                    String goal = st.optString("goal");
+                    if (goal.isEmpty()) goal = FlowVm.selText(sel);
+                    return visionAct(st, st.optBoolean("long") ? "long" : "tap", goal);
+                }
+                if (st.has("x") && (sel == null || st.optBoolean("coordFallback", true))) { src = "coord"; return tapRatio(st) ? null : "点击失败"; }
                 return "找不到按钮";
             }
+            case "ai": return aiStep(st);
             case "input": {
                 AccessibilityNodeInfo n = sel != null && sel.length() > 0 ? waitFind(sel, timeout) : null;
                 if (n == null) n = focusedInput();
@@ -705,7 +482,8 @@ public class LumiFlow {
                 return s.swipe((int) (st.optDouble("x") * m.widthPixels), (int) (st.optDouble("y") * m.heightPixels), (int) (st.optDouble("x2") * m.widthPixels), (int) (st.optDouble("y2") * m.heightPixels), st.optInt("ms", 350)) ? null : "滑动失败";
             }
             case "key": return s.global(st.optString("key", "back")) ? null : "按键失败";
-            case "wait": return waitFind(sel, st.optLong("timeout", 10000)) != null ? null : "等了很久也没出现";
+            case "wait": if (sel == null || sel.length() == 0) return "等待步缺少要等的文字";
+                return waitFind(sel, st.optLong("timeout", 10000)) != null ? null : "等了很久也没出现";
             case "sleep": sleep(st.optInt("ms", 1000)); return null;
             default: return "不认识的步骤 " + k;
         }
