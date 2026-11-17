@@ -381,3 +381,74 @@ button.row{width:100%;text-align:left}
 /* v0.9 overrides */
 .glass.chat-bar{position:absolute}
 .ui-stats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+
+/* ---------- v0.10 ChatGPT 式侧栏 */
+.main{position:absolute;inset:0;z-index:1;overflow:hidden;transition:left .4s var(--ease)}
+.side{position:absolute;left:0;top:0;bottom:0;width:min(300px,84vw);z-index:30;display:flex;flex-direction:column;gap:2px;
+  padding:calc(var(--sat) + 12px) 12px calc(var(--sab) + 12px);background:#fff7f1;border-right:1px solid rgba(150,70,30,.08);
+  backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);transform:translateX(-102%);transition:transform .45s var(--spring);box-shadow:10px 0 40px rgba(120,60,30,.08)}
+.side-open .side{transform:none}
+.side-scrim{position:absolute;inset:0;z-index:25;background:rgba(60,30,15,.18);opacity:0;pointer-events:none;transition:opacity .35s}
+.side-open .side-scrim{opacity:1;pointer-events:auto}
+.s-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.side-btn{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;flex:none;color:var(--ink);transition:background .2s}
+.side-btn:active{background:rgba(20,26,38,.06)}
+.s-search{flex:1;display:flex;align-items:center;gap:6px;height:40px;padding:0 12px;border-radius:12px;background:rgba(20,26,38,.05);color:var(--label2)}
+.s-search input{flex:1;min-width:0;font-size:15px;color:var(--ink)}
+.s-item{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:12px;font-size:15.5px;text-align:left;transition:background .2s}
+.s-item:hover,.s-conv:hover{background:rgba(20,26,38,.04)}
+.s-item.on,.s-conv.on{background:rgba(224,88,62,.1);color:var(--accent);font-weight:600}
+.s-item.new{font-weight:600}
+.s-sec{font-size:12.5px;color:var(--label2);padding:16px 12px 6px}
+.s-list{flex:1;overflow-y:auto;margin:0 -4px;padding:0 4px;scrollbar-width:thin}
+.s-conv{display:flex;align-items:center;gap:6px;height:40px;padding:0 6px 0 12px;border-radius:12px;font-size:15px;cursor:pointer}
+.s-del{opacity:0;color:var(--label3);padding:6px;transition:opacity .2s}
+.s-conv.on .s-del,.s-conv:hover .s-del{opacity:1}
+.s-empty{padding:8px 12px}
+.s-me{display:flex;align-items:center;gap:10px;padding:10px;border-radius:16px;margin-top:8px;text-align:left;border-top:1px solid var(--sep);transition:background .2s}
+.s-me.on{background:rgba(224,88,62,.08)}
+.avatar.sm{width:36px;height:36px;font-size:15px;display:grid;place-items:center;flex:none;box-shadow:none}
+.avatar.lg{width:64px;height:64px;font-size:26px;display:grid;place-items:center;flex:none}
+.avatar{display:grid;place-items:center}
+.up-tag{font-size:12px;font-weight:700;color:#fff;background:var(--accent);padding:4px 10px;border-radius:99px}
+.home-top{display:flex;justify-content:space-between;height:44px}
+.page-h{display:flex;align-items:flex-start;gap:6px}
+.page-h .side-btn{margin:2px 0 0 -10px}
+.sub-head .side-btn{margin-left:-10px}
+.nav-back{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.7);box-shadow:inset 0 0 0 1px rgba(20,26,38,.06);flex:none}
+.hello{padding-top:7vh}
+@media (min-width:980px){
+  .side-open .main{left:300px}
+  .side{width:300px;box-shadow:none}
+  .side-scrim{display:none}
+  .side-open .home-top .side-btn,.side-open .page-h>.side-btn,.side-open .sub-head>.side-btn,.side-open .chat-bar .cb-side{visibility:hidden;width:0;margin:0;padding:0}
+}
+/* 我的 / MCP / 定时任务 / 项目 */
+.me-card{display:flex;align-items:center;gap:16px;padding:18px;border-radius:26px;background:var(--card);border:1px solid var(--card-line);box-shadow:var(--warm-shadow)}
+.me-n{font-size:26px}
+.stack{display:flex;flex-direction:column;gap:12px}
+.card-row{background:var(--card);border:1px solid var(--card-line);border-radius:22px;padding:14px 16px;box-shadow:var(--warm-shadow);display:flex;flex-direction:column;gap:10px}
+.card-row.form{margin-top:12px}
+.cr-h{display:flex;align-items:center;gap:12px}
+.cr-acts{display:flex;flex-wrap:wrap;gap:8px}
+.pill-btn{display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 14px;border-radius:99px;font-size:13.5px;font-weight:600;background:var(--accent-soft);color:var(--accent)}
+.pill-btn.ghost{background:rgba(20,26,38,.05);color:var(--label2)}
+.pill-btn.solid{background:var(--accent);color:#fff}
+.pill-btn:disabled{opacity:.6}
+.st-dot.ok{background:var(--green);box-shadow:0 0 0 5px rgba(52,199,89,.15)}
+.st-dot.error{background:#e5484d;box-shadow:0 0 0 5px rgba(229,72,77,.14)}
+.err.sm{margin:0;padding:8px 12px;font-size:13px}
+.tools{display:flex;flex-wrap:wrap;gap:6px}
+.tool{font-family:var(--mono);font-size:12px;padding:4px 9px;border-radius:8px;background:rgba(20,26,38,.05)}
+.inp{width:100%;font-size:15.5px;padding:12px 14px;border-radius:14px;background:rgba(20,26,38,.04);resize:none;line-height:1.5}
+.inp.big{background:var(--card);border:1px solid var(--card-line);box-shadow:var(--warm-shadow);border-radius:20px;padding:14px 16px}
+.inp.time{width:auto;font-variant-numeric:tabular-nums}
+.add-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:52px;margin-top:12px;border-radius:18px;font-size:15.5px;font-weight:600;color:var(--accent);
+  border:1.5px dashed rgba(224,88,62,.4);background:rgba(255,255,255,.4)}
+.add-btn.solid{border:0;background:var(--accent);color:#fff;box-shadow:0 8px 20px rgba(224,88,62,.3)}
+.task-time{font-size:28px;min-width:76px}
+.task-when{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.days{display:flex;gap:4px}
+.days button{width:34px;height:34px;border-radius:50%;font-size:13.5px;background:rgba(20,26,38,.05);color:var(--label2)}
+.days button.on{background:var(--accent);color:#fff;font-weight:600}
+.adv-toggle.danger{color:#d0383e}

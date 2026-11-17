@@ -34,6 +34,12 @@ const P: Record<string, string> = {
   right: '<path d="M9 5l7 7-7 7"/>',
   thumb: '<path d="M7 11v9H4v-9zM7 11l4-8a2 2 0 0 1 2.6 1.9L13 9h5.5a2 2 0 0 1 2 2.4l-1.4 6.6A2.5 2.5 0 0 1 16.7 20H7"/>',
   doc: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  plug: '<path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/>',
+  side: '<rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9 4v16"/>',
+  crown: '<path d="M4 8l4 4 4-7 4 7 4-4-2 10H6z"/>',
+  play: '<path d="M7 5l12 7-12 7z"/>',
   cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
 }
 export function Icon({ n, s = 22, w = 1.9, c = 'currentColor' }: { n: string; s?: number; w?: number; c?: string }) {

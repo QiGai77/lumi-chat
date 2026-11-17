@@ -7,23 +7,30 @@ import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
 import { AGENTS, agentById, type Agent } from './agents'
+import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
 
-type Tab = 'chat' | 'fav' | 'agents' | 'wallet' | 'settings'
+type View = 'home' | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
 type Gen = 'chat' | 'image' | 'video'
 const GEN_LABEL: Record<Gen, string> = { chat: '对话', image: '生成图片', video: '生成视频' }
-const NAV: [Tab, string][] = [['chat', '对话'], ['fav', '收藏'], ['agents', '智能体'], ['wallet', '会员']]
 const QUICK: [string, string][] = [
   ['润色文字', '帮我把这段文字改得更简洁专业：\n'], ['解释代码', '解释下面这段代码在做什么：\n'], ['旅行计划', '帮我做一个两日游计划，目的地：'],
   ['读论文', '帮我精读这篇论文，按问题、方法、结论拆解：\n'], ['写周报', '把下面的记录整理成周报：\n'],
 ]
 const greeting = () => { const h = new Date().getHours(); return h < 6 ? '夜深了' : h < 11 ? '早上好' : h < 14 ? '中午好' : h < 18 ? '下午好' : '晚上好' }
 const USER_NAME = 'Qi'
+const USER_FULL = 'Qi Gai'
 
 interface Pending { text: string; gen: Gen }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('chat')
+  const [view, setView] = useState<View>('home')
+  const wide = () => window.innerWidth >= 980
+  const [side, setSide] = useState(wide)
+  const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
+  const [projects, setProjects] = useState<Project[]>(loadProjects)
+  const [servers, setServers] = useState<McpServer[]>(loadMcp)
+  const [tasks, setTasks] = useState<Task[]>(loadTasks)
   const [openId, setOpenId] = useState<string | null>(null)
   const [pending, setPending] = useState<Pending | null>(null)
   const [settings, setSettings] = useState<Settings>(loadSettings)
@@ -32,6 +39,9 @@ export default function App() {
   const [sheet, setSheet] = useState(false)
   const [gu, setGu] = useState<GatewayUsage | null>(null)
   useEffect(() => saveConvs(convs), [convs])
+  useEffect(() => saveProjects(projects), [projects])
+  useEffect(() => saveMcp(servers), [servers])
+  useEffect(() => saveTasks(tasks), [tasks])
   useEffect(() => saveSettings(settings), [settings])
   useEffect(() => localStorage.setItem('lumi.tier', tier), [tier])
   useEffect(() => localStorage.setItem('lumi.think', think ? '1' : '0'), [think])
@@ -42,59 +52,285 @@ export default function App() {
   }, [settings.baseUrl, settings.apiKey])
 
   const open = convs.find(c => c.id === openId) || null
-  const newChat = (first?: Pending, agent?: Agent) => {
-    const c: Conv = { id: uid(), title: agent ? agent.name : '新对话', tier, updated: Date.now(), messages: [], agent: agent?.id }
-    setConvs(cs => [c, ...cs]); setPending(first && first.text.trim() ? first : null); setOpenId(c.id)
+  const go = (v: View) => { setView(v); setOpenId(null); shut() }
+  const openConv = (id: string) => { setOpenId(id); shut() }
+  const newChat = (first?: Pending, extra?: { agent?: Agent; project?: string }) => {
+    const c: Conv = { id: uid(), title: extra?.agent ? extra.agent.name : '新对话', tier, updated: Date.now(), messages: [], agent: extra?.agent?.id, project: extra?.project }
+    setConvs(cs => [c, ...cs]); setPending(first && first.text.trim() ? first : null); setOpenId(c.id); shut()
   }
   const update = (id: string, fn: (c: Conv) => Conv) => setConvs(cs => cs.map(c => (c.id === id ? fn(c) : c)))
-  const del = (id: string) => setConvs(cs => cs.filter(c => c.id !== id))
+  const del = (id: string) => { setConvs(cs => cs.filter(c => c.id !== id)); if (openId === id) setOpenId(null) }
+
+  // 定时任务：App 打开期间每 30 秒检查一次，到点就在后台新建对话并跑完
+  const running = useRef(new Set<string>())
+  const runTask = async (t: Task) => {
+    if (running.current.has(t.id)) return
+    running.current.add(t.id)
+    const cid = uid()
+    const user: Msg = { role: 'user', content: t.prompt }
+    setTasks(ts => ts.map(x => x.id === t.id ? { ...x, lastRun: Date.now(), lastConv: cid } : x))
+    setConvs(cs => [{ id: cid, title: t.name, tier, updated: Date.now(), messages: [user, { role: 'assistant', content: '', tier }], task: t.id }, ...cs])
+    const set = (m: Partial<Msg>) => setConvs(cs => cs.map(c => c.id === cid ? { ...c, updated: Date.now(), messages: [user, { ...c.messages[1], ...m, role: 'assistant' }] } : c))
+    try {
+      const r = await streamChat({ settings, tier, think: false, messages: [user], signal: new AbortController().signal, system: settings.genUI ? GENUI_PROMPT : undefined, onDelta: (t2, rs) => set({ content: t2, reasoning: rs }) })
+      set({ ms: r.firstTokenMs }); addUsage(0, r.promptTokens + r.completionTokens)
+    } catch (e) { set({ content: '定时任务运行失败：' + (e as Error).message }) }
+    running.current.delete(t.id)
+  }
+  const tasksRef = useRef(tasks); tasksRef.current = tasks
+  useEffect(() => {
+    const tick = () => tasksRef.current.filter(isDue).forEach(runTask)
+    tick(); const h = setInterval(tick, 30000); return () => clearInterval(h)
+  }, [settings.baseUrl, settings.apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [wall, setWall] = useState<string | null>(null)
   const [wallVer, setWallVer] = useState(() => Number(localStorage.getItem('lumi.wallVer') || 0))
   useEffect(() => { if (settings.theme === 'wallpaper') blobUrl('wallpaper:' + wallVer).then(u => setWall(u)); else setWall(null) }, [settings.theme, wallVer])
   const plan = gu?.planName || null
+  const menuBtn = <button className="side-btn press" onClick={() => setSide(true)} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
+  const back = (to: View, title: string) => <div className="sub-head">{menuBtn}<button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
+  const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h">{menuBtn}<div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
+  const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
-      <div className={`page ${open ? 'pushed' : ''}`}>
-        <div className="scroll">
-          <div className={`wrap ${tab === 'chat' ? 'wide' : ''}`}>
-            {tab === 'settings'
-              ? <div className="sub-head"><Glass className="nav-btn-s press" onClick={() => setTab('chat')}><Icon n="back" s={20} w={2.2} /></Glass><span className="sub-title">设置</span></div>
-              : <TopBar tab={tab} setTab={setTab} />}
-            {tab === 'chat' && <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
-              onSend={p => newChat(p)} onOpen={setOpenId} onDelete={del} />}
-            {tab === 'fav' && <Favs convs={convs} onOpen={setOpenId} onUnfav={(cid, i) => update(cid, c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: false } : m) }))} />}
-            {tab === 'agents' && <Agents onPick={a => newChat(undefined, a)} />}
-            {tab === 'wallet' && <Wallet settings={settings} gu={gu} onSettings={() => setTab('settings')} />}
-            {tab === 'settings' && <SettingsPage s={settings} set={setSettings} plan={plan} onWall={v => { localStorage.setItem('lumi.wallVer', String(v)); setWallVer(v) }} />}
-            <div className="bottom-pad" />
+      <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
+        plan={plan} onClose={() => setSide(false)} />
+      <div className="side-scrim" onClick={() => setSide(false)} />
+      <main className="main">
+        <div className={`page ${open ? 'pushed' : ''}`}>
+          <div className="scroll">
+            <div className={`wrap ${view === 'home' ? 'wide' : ''}`}>
+              {view === 'home' && <><div className="home-top">{menuBtn}</div>
+                <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
+                  onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
+              {view === 'skills' && <>{head('技能', '预设好角色和方法，点开就能用')}<Agents onPick={a => newChat(undefined, { agent: a })} /></>}
+              {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<McpPage servers={servers} setServers={setServers} /></>}
+              {view === 'tasks' && <>{head('定时任务', '到点自动提问，结果存成一段新对话')}<TasksPage tasks={tasks} setTasks={setTasks} onRun={runTask} onOpen={openConv} /></>}
+              {view === 'projects' && <>{head('项目', '把相关对话放在一起，共用一套说明')}<ProjectsPage projects={projects} setProjects={setProjects} convs={convs} onOpen={p => go(`project:${p}`)} /></>}
+              {proj && <>{back('projects', proj.name)}<ProjectPage p={proj} convs={convs.filter(c => c.project === proj.id)}
+                save={np => setProjects(ps => ps.map(x => x.id === np.id ? np : x))} remove={() => { setProjects(ps => ps.filter(x => x.id !== proj.id)); go('projects') }}
+                onNew={() => newChat(undefined, { project: proj.id })} onOpen={openConv} /></>}
+              {view === 'me' && <>{head('我的', '账号、会员与设置')}<MePage plan={plan} gu={gu} settings={settings} favCount={convs.reduce((a, c) => a + c.messages.filter(m => m.fav).length, 0)} go={go} /></>}
+              {view === 'fav' && <>{back('me', '收藏')}<Favs convs={convs} onOpen={openConv} onUnfav={(cid, i) => update(cid, c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: false } : m) }))} /></>}
+              {view === 'wallet' && <>{back('me', '升级会员')}<Wallet settings={settings} gu={gu} onSettings={() => go('settings')} /></>}
+              {view === 'settings' && <>{back('me', '设置')}<SettingsPage s={settings} set={setSettings} plan={plan} onWall={v => { localStorage.setItem('lumi.wallVer', String(v)); setWallVer(v) }} /></>}
+              <div className="bottom-pad" />
+            </div>
           </div>
         </div>
-      </div>
-      {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
-        onBack={() => setOpenId(null)} onNew={() => newChat()} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
+        {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
+          project={projects.find(p => p.id === open.project)} onMenu={() => setSide(true)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
+      </main>
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
-        plan={plan} gu={gu} onPlans={() => { setSheet(false); setOpenId(null); setTab('wallet') }} />
+        plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} />
     </div>
   )
 }
 
-/* ---------------- top bar + pill nav */
-function TopBar({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
-  const idx = NAV.findIndex(n => n[0] === tab)
+/* ---------------- sidebar (ChatGPT 式) */
+function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClose }: {
+  view: View; go: (v: View) => void; convs: Conv[]; openId: string | null; onOpen: (id: string) => void; onNew: () => void
+  onDelete: (id: string) => void; plan: string | null; onClose: () => void
+}) {
+  const [q, setQ] = useState('')
+  const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
+  const item = (v: View, icon: string, label: string) => (
+    <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) ? 'on' : ''}`} onClick={() => go(v)}><Icon n={icon} s={19} w={1.9} />{label}</button>)
   return (
-    <header className="top">
-      <div className="brand"><span className="logo">栖</span><b>栖语</b><span className="brand-en">Lumi</span></div>
-      <nav className="pill-nav" style={{ ['--i' as string]: idx, ['--n' as string]: NAV.length }}>
-        {idx >= 0 && <span className="pill-ind" />}
-        {NAV.map(([t, l]) => <button key={t} className={t === tab ? 'on' : ''} onClick={() => setTab(t)}>{l}</button>)}
-      </nav>
-      <div className="top-r">
-        <button className="avatar press" onClick={() => setTab('settings')} aria-label="设置">{USER_NAME[0]}</button>
+    <aside className="side">
+      <div className="s-head">
+        <button className="side-btn" onClick={onClose} aria-label="收起侧栏"><Icon n="side" s={22} w={1.9} /></button>
+        <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
-    </header>
+      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><Icon n="compose" s={19} w={1.9} />新建对话</button>
+      {item('skills', 'spark', '技能')}
+      {item('mcp', 'plug', 'MCP')}
+      {item('tasks', 'clock', '定时任务')}
+      {item('projects', 'folder', '项目')}
+      <div className="s-sec">最近</div>
+      <div className="s-list">
+        {list.length === 0 && <div className="t13 s-empty">{q ? '没有找到' : '还没有对话'}</div>}
+        {list.map(c => (
+          <div key={c.id} className={`s-conv ${c.id === openId ? 'on' : ''}`} onClick={() => onOpen(c.id)}>
+            <span className="ell grow">{c.title}</span>
+            <button className="s-del" aria-label="删除" onClick={e => { e.stopPropagation(); if (confirm(`删除「${c.title}」？`)) onDelete(c.id) }}><Icon n="trash" s={15} /></button>
+          </div>))}
+      </div>
+      <button className={`s-me ${view === 'me' || view === 'wallet' || view === 'settings' || view === 'fav' ? 'on' : ''}`} onClick={() => go('me')}>
+        <span className="avatar sm">{USER_NAME[0]}</span>
+        <div className="grow"><div className="b">{USER_FULL}</div><div className="t12">{plan || 'Free'}</div></div>
+        {!plan && <span className="up-tag">升级</span>}
+      </button>
+    </aside>
+  )
+}
+
+/* ---------------- 我的 */
+function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu: GatewayUsage | null; settings: Settings; favCount: number; go: (v: View) => void }) {
+  const u = usageOf(gu)
+  const ok = !!(settings.baseUrl && settings.apiKey)
+  return (
+    <section className="fade">
+      <div className="me-card">
+        <span className="avatar lg">{USER_NAME[0]}</span>
+        <div className="grow"><div className="me-n serif">{USER_FULL}</div><div className="t13">{ok ? '已连接网关' : '还没连接网关'}</div></div>
+      </div>
+      <div className="acct big" style={{ marginTop: 14 }}>
+        <div className="grow">
+          <div className="t12">当前套餐</div><div className="acct-n serif">{plan || 'Free'}</div>
+          {u.limit > 0 && <div className="meter"><div style={{ width: `${u.pct}%` }} /></div>}
+          <div className="t12">{u.limit > 0 ? `${u.win}已用 ${u.pct.toFixed(0)}%` : '升级后可用 Helium · Neon · Argon'}{u.exp ? ` · ${u.exp.getMonth() + 1}月${u.exp.getDate()}日到期` : ''}</div>
+        </div>
+        <button className="acct-btn" onClick={() => go('wallet')}>{plan ? '管理' : '升级'}</button>
+      </div>
+      <div className="list" style={{ marginTop: 18 }}>
+        <button className="row press-row" onClick={() => go('wallet')}><span className="ico"><Icon n="crown" s={16} w={2} /></span><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => go('fav')}><span className="ico"><Icon n="star" s={16} w={2} /></span><span className="t16 grow">收藏</span><span className="t13">{favCount || ''}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => go('settings')}><span className="ico"><Icon n="gear" s={16} w={2} /></span><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+      </div>
+    </section>
+  )
+}
+
+/* ---------------- MCP */
+function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f: (s: McpServer[]) => McpServer[]) => void }) {
+  const [form, setForm] = useState<{ name: string; url: string; token: string } | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const patch = (id: string, p: Partial<McpServer>) => setServers(ss => ss.map(s => s.id === id ? { ...s, ...p } : s))
+  const test = async (s: McpServer) => {
+    setBusy(s.id)
+    try { patch(s.id, { tools: await probeMcp(s), status: 'ok', error: undefined }) }
+    catch (e) { patch(s.id, { status: 'error', error: (e as Error).message === 'Failed to fetch' ? '连不上（地址错误或服务器不允许跨域）' : (e as Error).message }) }
+    setBusy(null)
+  }
+  return (
+    <section className="fade">
+      {servers.length === 0 && !form && <div className="empty-card"><Icon n="plug" s={28} w={1.6} /><div>还没有 MCP 服务器</div><span className="t13">添加后可以读取它提供的工具</span></div>}
+      <div className="stack">{servers.map(s => (
+        <div key={s.id} className="card-row">
+          <div className="cr-h">
+            <span className={`st-dot ${s.status}`} />
+            <div className="grow"><div className="t16 b ell">{s.name}</div><div className="t12 ell">{s.url}</div></div>
+            <Toggle on={s.enabled} set={b => patch(s.id, { enabled: b })} />
+          </div>
+          {s.status === 'error' && <div className="err sm">{s.error}</div>}
+          {s.tools.length > 0 && <div className="tools">{s.tools.map(t => <span key={t.name} className="tool" title={t.description}>{t.name}</span>)}</div>}
+          <div className="cr-acts">
+            <button className="pill-btn" onClick={() => test(s)} disabled={busy === s.id}>{busy === s.id ? '连接中…' : s.status === 'ok' ? `重新读取 · ${s.tools.length} 个工具` : '连接并读取工具'}</button>
+            <button className="pill-btn ghost" onClick={() => { if (confirm(`删除「${s.name}」？`)) setServers(ss => ss.filter(x => x.id !== s.id)) }}>删除</button>
+          </div>
+        </div>))}
+      </div>
+      {form ? (
+        <div className="card-row form">
+          <input className="inp" placeholder="名称，如 GitHub" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <input className="inp" placeholder="https://…/mcp" value={form.url} onChange={e => setForm({ ...form, url: e.target.value })} />
+          <input className="inp" placeholder="Bearer Token（可选）" type="password" value={form.token} onChange={e => setForm({ ...form, token: e.target.value })} />
+          <div className="cr-acts">
+            <button className="pill-btn solid" onClick={() => { if (!form.url.trim()) return; const s: McpServer = { id: uid(), name: form.name.trim() || new URL(form.url, location.href).host, url: form.url.trim(), token: form.token, enabled: true, tools: [], status: 'unknown' }; setServers(ss => [...ss, s]); setForm(null); test(s) }}>添加</button>
+            <button className="pill-btn ghost" onClick={() => setForm(null)}>取消</button>
+          </div>
+        </div>
+      ) : <button className="add-btn press" onClick={() => setForm({ name: '', url: '', token: '' })}><Icon n="plus" s={18} w={2.2} />添加服务器</button>}
+      <div className="t12 foot">目前可连接并读取工具列表；在对话中调用工具将在下一版接入</div>
+    </section>
+  )
+}
+
+/* ---------------- 定时任务 */
+const WEEK = ['日', '一', '二', '三', '四', '五', '六']
+function TasksPage({ tasks, setTasks, onRun, onOpen }: { tasks: Task[]; setTasks: (f: (t: Task[]) => Task[]) => void; onRun: (t: Task) => void; onOpen: (id: string) => void }) {
+  const blank: Task = { id: '', name: '', prompt: '', time: '08:00', days: [], enabled: true }
+  const [form, setForm] = useState<Task | null>(null)
+  const patch = (id: string, p: Partial<Task>) => setTasks(ts => ts.map(t => t.id === id ? { ...t, ...p } : t))
+  const dayText = (d: number[]) => d.length === 0 || d.length === 7 ? '每天' : d.length === 5 && [1, 2, 3, 4, 5].every(x => d.includes(x)) ? '工作日' : '每周' + [...d].sort().map(x => WEEK[x]).join('')
+  return (
+    <section className="fade">
+      {tasks.length === 0 && !form && <div className="empty-card"><Icon n="clock" s={28} w={1.6} /><div>还没有定时任务</div><span className="t13">比如每天 8:00 给你一份新闻摘要</span></div>}
+      <div className="stack">{tasks.map(t => (
+        <div key={t.id} className="card-row">
+          <div className="cr-h">
+            <div className="task-time serif">{t.time}</div>
+            <div className="grow"><div className="t16 b ell">{t.name}</div><div className="t12 ell">{dayText(t.days)} · {t.prompt}</div></div>
+            <Toggle on={t.enabled} set={b => patch(t.id, { enabled: b })} />
+          </div>
+          <div className="cr-acts">
+            <button className="pill-btn" onClick={() => onRun(t)}><Icon n="play" s={13} w={2.2} />立即运行</button>
+            {t.lastConv && <button className="pill-btn ghost" onClick={() => onOpen(t.lastConv!)}>上次结果 · {when(t.lastRun || 0)}</button>}
+            <button className="pill-btn ghost" onClick={() => setForm(t)}>编辑</button>
+          </div>
+        </div>))}
+      </div>
+      {form ? (
+        <div className="card-row form">
+          <input className="inp" placeholder="名称，如 早间新闻" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+          <textarea className="inp" rows={3} placeholder="到点要问的话" value={form.prompt} onChange={e => setForm({ ...form, prompt: e.target.value })} />
+          <div className="task-when">
+            <input className="inp time" type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} />
+            <div className="days">{WEEK.map((w, i) => <button key={i} className={form.days.includes(i) ? 'on' : ''} onClick={() => setForm({ ...form, days: form.days.includes(i) ? form.days.filter(x => x !== i) : [...form.days, i] })}>{w}</button>)}</div>
+          </div>
+          <div className="t12">不选星期即每天。App 打开时到点执行，关闭期间错过的会在下次打开 6 小时内补跑。</div>
+          <div className="cr-acts">
+            <button className="pill-btn solid" onClick={() => {
+              if (!form.prompt.trim()) return
+              const t = { ...form, name: form.name.trim() || form.prompt.slice(0, 12), lastRun: form.id ? form.lastRun : Date.now() }
+              setTasks(ts => form.id ? ts.map(x => x.id === form.id ? t : x) : [...ts, { ...t, id: uid() }]); setForm(null)
+            }}>保存</button>
+            {form.id && <button className="pill-btn ghost" onClick={() => { setTasks(ts => ts.filter(x => x.id !== form.id)); setForm(null) }}>删除</button>}
+            <button className="pill-btn ghost" onClick={() => setForm(null)}>取消</button>
+          </div>
+        </div>
+      ) : <button className="add-btn press" onClick={() => setForm(blank)}><Icon n="plus" s={18} w={2.2} />新建定时任务</button>}
+    </section>
+  )
+}
+
+/* ---------------- 项目 */
+const PTONES: Project['tone'][] = ['coral', 'sage', 'gold', 'plum']
+function ProjectsPage({ projects, setProjects, convs, onOpen }: { projects: Project[]; setProjects: (f: (p: Project[]) => Project[]) => void; convs: Conv[]; onOpen: (id: string) => void }) {
+  const [name, setName] = useState<string | null>(null)
+  return (
+    <section className="fade">
+      {projects.length === 0 && name === null && <div className="empty-card"><Icon n="folder" s={28} w={1.6} /><div>还没有项目</div><span className="t13">比如「毕业论文」「求职」，对话会共用项目说明</span></div>}
+      <div className="agents">{projects.map(p => (
+        <button key={p.id} className={`agent ${p.tone} press-row`} onClick={() => onOpen(p.id)}>
+          <span className="ag-i"><Icon n="folder" s={21} w={1.9} /></span>
+          <div className="grow"><div className="ag-n">{p.name}</div><div className="t13 ell">{convs.filter(c => c.project === p.id).length} 个对话{p.instructions ? ' · ' + p.instructions : ''}</div></div>
+          <Icon n="right" s={16} w={2} c="var(--label3)" />
+        </button>))}
+      </div>
+      {name !== null ? (
+        <div className="card-row form" style={{ marginTop: 12 }}>
+          <input className="inp" autoFocus placeholder="项目名称" value={name} onChange={e => setName(e.target.value)} />
+          <div className="cr-acts">
+            <button className="pill-btn solid" onClick={() => { if (!name.trim()) return; const p: Project = { id: uid(), name: name.trim(), instructions: '', tone: PTONES[projects.length % 4], created: Date.now() }; setProjects(ps => [...ps, p]); setName(null); onOpen(p.id) }}>创建</button>
+            <button className="pill-btn ghost" onClick={() => setName(null)}>取消</button>
+          </div>
+        </div>
+      ) : <button className="add-btn press" onClick={() => setName('')}><Icon n="plus" s={18} w={2.2} />新建项目</button>}
+    </section>
+  )
+}
+
+function ProjectPage({ p, convs, save, remove, onNew, onOpen }: { p: Project; convs: Conv[]; save: (p: Project) => void; remove: () => void; onNew: () => void; onOpen: (id: string) => void }) {
+  return (
+    <section className="fade">
+      <div className="sec">项目说明 · 这个项目里的每段对话都会带上</div>
+      <textarea className="inp big" rows={4} placeholder="比如：我在写关于城市更新的硕士论文，回答用学术口吻，引用给出处。" value={p.instructions} onChange={e => save({ ...p, instructions: e.target.value })} />
+      <button className="add-btn solid press" onClick={onNew}><Icon n="compose" s={18} w={2} />在项目里新建对话</button>
+      <div className="sec">对话 · {convs.length}</div>
+      {convs.length === 0 ? <div className="empty">还没有对话</div> : (
+        <div className="list">{convs.map(c => (
+          <div key={c.id} className="row press-row" onClick={() => onOpen(c.id)}>
+            <El t={asTier(c.tier)} s={30} />
+            <div className="grow"><div className="t16 ell">{c.title}</div><div className="t13 ell">{snippet(c) || '还没有消息'}</div></div>
+            <span className="t12">{when(c.updated)}</span>
+          </div>))}
+        </div>)}
+      <button className="adv-toggle danger" onClick={() => { if (confirm(`删除项目「${p.name}」？对话会保留。`)) remove() }}>删除项目</button>
+    </section>
   )
 }
 
@@ -217,7 +453,6 @@ function Favs({ convs, onOpen, onUnfav }: { convs: Conv[]; onOpen: (id: string) 
   const items = convs.flatMap(c => c.messages.map((m, i) => ({ c, m, i })).filter(x => x.m.fav))
   return (
     <section className="fade">
-      <div className="page-h"><h1 className="serif">收藏</h1><p>回答下方点星标，好答案就留在这里。</p></div>
       {items.length === 0 ? <div className="empty-card"><Icon n="star" s={28} w={1.6} /><div>还没有收藏</div><span className="t13">在对话里点回答下方的星标</span></div> : (
         <div className="favs">{items.map(({ c, m, i }) => (
           <div key={c.id + i} className="fav press-row" onClick={() => onOpen(c.id)}>
@@ -235,7 +470,6 @@ function Favs({ convs, onOpen, onUnfav }: { convs: Conv[]; onOpen: (id: string) 
 function Agents({ onPick }: { onPick: (a: Agent) => void }) {
   return (
     <section className="fade">
-      <div className="page-h"><h1 className="serif">智能体</h1><p>预设好角色和方法，点开就能用。</p></div>
       <div className="agents">{AGENTS.map(a => (
         <button key={a.id} className={`agent ${a.tone} press-row`} onClick={() => onPick(a)}>
           <span className="ag-i"><Icon n={a.icon} s={22} w={1.9} /></span>
@@ -259,9 +493,9 @@ function MediaView({ m }: { m: Media }) {
     : <a href={url} target="_blank" rel="noreferrer"><img className="media" src={url} alt={m.prompt} /></a>
 }
 
-function Chat({ conv, settings, tier, think, pending, clearPending, onBack, onNew, onMode, update }: {
-  conv: Conv; settings: Settings; tier: Tier; think: boolean; pending: Pending | null; clearPending: () => void
-  onBack: () => void; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
+function Chat({ conv, settings, tier, think, pending, clearPending, project, onMenu, onNew, onMode, update }: {
+  conv: Conv; settings: Settings; tier: Tier; think: boolean; pending: Pending | null; clearPending: () => void; project?: Project
+  onMenu: () => void; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -305,7 +539,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, onBack, onNe
     update(c => ({ ...c, title, tier, updated: Date.now(), messages: [...base, { role: 'assistant', content: '', tier }] }))
     const t0 = performance.now()
     let thinkMs = 0
-    const system = [agent?.prompt, settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+    const system = [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '', settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
     try {
       const r = await streamChat({
         settings, tier, think, messages: base, signal: ctrl.current.signal, system,
@@ -327,7 +561,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, onBack, onNe
   const regen = () => { const m = conv.messages; if (m.length >= 2 && !m[m.length - 1].media) send(m.slice(0, -1)) }
   const toggleFav = (i: number) => update(c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: !m.fav } : m) }))
   const last = conv.messages.length - 1
-  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${agent ? ' · ' + agent.name : ''}`
+  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${agent ? ' · ' + agent.name : ''}${project ? ' · ' + project.name : ''}`
 
   return (
     <div className="chat slide-in">
@@ -364,7 +598,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, onBack, onNe
       </div>
       <div className="edge-top" />
       <Glass className="chat-bar" radius={26}>
-        <button className="cb-btn" onClick={onBack} aria-label="返回"><Icon n="menu" s={22} w={2} /></button>
+        <button className="cb-btn cb-side" onClick={onMenu} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>
@@ -481,7 +715,6 @@ function Wallet({ settings, gu, onSettings }: { settings: Settings; gu: GatewayU
   const total = days.reduce((a, d) => a + d.tokens, 0)
   return (
     <section className="fade">
-      <div className="page-h"><h1 className="serif">会员</h1><p>Helium · Neon · Argon 三个模型，按套餐额度使用。</p></div>
       <div className="acct big">
         <div className="grow">
           <div className="t12">{plan ? '当前套餐' : gu ? '还没有订阅' : connected ? '读取中…' : '未连接网关'}</div>
@@ -594,7 +827,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 网关/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 网关/purchase')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.9 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.10 · 开源 MIT</div>
     </section>
   )
 }
