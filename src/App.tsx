@@ -328,7 +328,7 @@ function Wallet({ settings, onSettings }: { settings: Settings; onSettings: () =
           const cur = plan?.toLowerCase() === p.id.toLowerCase()
           return (
             <div key={p.id} className={`plan-card ${p.id.toLowerCase()} ${cur ? 'cur' : ''}`}>
-              <div className="plan-top"><span className="plan-name">{p.id}</span>{p.id === 'Max' && <span className="plan-tag">推荐</span>}{cur && <span className="plan-tag cur">当前</span>}</div>
+              <div className="plan-top"><span className="plan-name">{p.id}</span></div>{cur ? <span className="plan-tag cur">当前</span> : p.id === 'Max' && <span className="plan-tag">推荐</span>}
               <div className="plan-price"><small>¥</small>{p.price}<span>/ 月</span></div>
               <ul>{p.perks.map(x => <li key={x}><Icon n="check" s={14} w={2.6} />{x}</li>)}</ul>
               <button className="plan-btn" onClick={buy}>{cur ? '续费' : '订阅'}</button>

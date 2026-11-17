@@ -2,13 +2,14 @@
 
 一个仿 Claude 体验的 AI 聊天 App（Android / Web），橙白暖色玻璃风格，可换自定义壁纸。
 
-- **两档线路**：经济（官方价 0.5×）/ 极速（官方价 1.5×），可分别配置 Key 和模型
+- **三个模型**：Helium（轻快）/ Neon（均衡）/ Argon（最强），由 Sub2API Composite 分组把任意上游打包而成，App 只能用这三个
+- **会员订阅**：Pro ¥50 / Max ¥100 / Ultra ¥200 每月，套餐、到期、额度与每日用量实时读网关 `/v1/usage`
 - **流式输出**：OpenAI 兼容 `/v1/chat/completions`，支持 DeepSeek 的思考过程（`reasoning_content`）
 - **Liquid Glass**：导航层用玻璃，内容层实色（遵循 Apple HIG）。材质参数参照 [miuix-glass](https://github.com/compose-miuix-ui/miuix)，边缘折射用 SVG `feDisplacementMap` 做 backdrop-filter（Android WebView / Chromium 生效，其他浏览器回退为模糊）
 - **Markdown + LaTeX**：GFM 表格、任务列表、代码高亮与复制；`$..$`、`$$..$$`、`\(..\)`、`\[..\]` 公式（KaTeX + mhchem），流式输出不闪烁
 - **智能界面**：模型可用 ` ```lumi-ui ` JSON 输出卡片（数据、图表、步骤、清单、进度、按钮），按钮点了直接发下一句
 - **图片 / 视频生成**：输入框「+」切换，OpenAI 兼容 `/v1/images/generations` 与 `/v1/videos`，结果存本机
-- **卡片式钱包**：本月消费卡、线路卡、14 天图表、账单
+- **会员页**：套餐卡、三档订阅卡、14 天用量图、用量记录
 - **本地存储**：对话、Key、用量只存在本机
 
 ## 下载
@@ -17,19 +18,8 @@
 
 ## 配置
 
-打开 App →「设置」：
-
-| 项 | 说明 |
-| --- | --- |
-| 地址 | 你的 [Sub2API](https://github.com/Wei-Shaw/sub2api) 网关地址，或 `https://api.deepseek.com` |
-| 经济 Key / 极速 Key | 网关里两个分组各自的 Key；极速留空则共用经济 Key |
-| 模型 | 默认 `deepseek-chat`，深度思考用 `deepseek-reasoner` |
-| 单价 | 只用于 App 内估算显示，实际扣费以网关为准 |
-| 充值页 | Sub2API 用户中心地址 |
-| 图片与视频生成 | 地址和 Key 留空则沿用上面的；模型默认 `gpt-image-1` / `sora-2`，可改成网关支持的任意模型 |
-| 主题 | 橙白（默认）或壁纸（从本机选一张图） |
-
-> 网关需要允许跨域（CORS），App 的来源是 `https://localhost`。
+打开 App →「设置」填网关地址和 API Key；Key 输入框下方的蓝色「获取密钥」直接跳到网关的 `/keys` 页。
+网关怎么搭、怎么接入 OpenCode / Claude / Codex / Gemini / DeepSeek 等第三方订阅、怎么打包成 Helium / Neon / Argon、怎么建 Pro / Max / Ultra 套餐，见 [server/SETUP.md](server/SETUP.md)。
 
 ## 开发
 

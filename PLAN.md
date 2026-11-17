@@ -81,3 +81,5 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 
 ## 进度
 - 2026-11-17 18:58 计划写好。
+- 2026-11-17 19:20 v0.8 完成：server/（Sub2API compose + SETUP.md）、App 三模型（元素周期表徽章）、获取密钥链接、会员页（mock /v1/usage 截图自测）。版本 0.8，tag v0.8。
+- 待用户定：各套餐额度（USD 上限）、Pro 是否含 Argon、三个模型各自接哪个上游；"opendesign" 未找到对应平台，按 OpenAI 兼容 API Key 方式接入。

@@ -7,9 +7,9 @@ export const MODELS: { id: Tier; name: string; desc: string; iq: number }[] = [
 ]
 export const MODEL_NAME: Record<Tier, string> = { helium: 'Helium', neon: 'Neon', argon: 'Argon' }
 export const PLANS = [
-  { id: 'Pro', price: 50, perks: ['Helium、Neon、Argon 全部可用', '日常用量'] },
-  { id: 'Max', price: 100, perks: ['约 Pro 2.5 倍用量', '高峰优先'] },
-  { id: 'Ultra', price: 200, perks: ['约 Pro 6 倍用量', 'Argon 长任务优先'] },
+  { id: 'Pro', price: 50, perks: ['三模型可用', '日常用量'] },
+  { id: 'Max', price: 100, perks: ['2.5 倍用量', '高峰优先'] },
+  { id: 'Ultra', price: 200, perks: ['6 倍用量', '长任务优先'] },
 ]
 
 export interface Settings {
