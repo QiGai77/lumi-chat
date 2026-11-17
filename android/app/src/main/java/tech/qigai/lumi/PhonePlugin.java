@@ -89,7 +89,7 @@ public class PhonePlugin extends Plugin {
         final String name = call.getString("name", "Flow");
         final org.json.JSONArray steps = call.getArray("steps", new JSArray());
         LumiAdb.IO.execute(() -> {
-            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", false)))); }
+            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", true)))); }
             catch (Throwable e) { call.reject("Flow 运行出错：" + e.getMessage()); }
         });
     }

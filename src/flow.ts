@@ -320,7 +320,7 @@ export async function runFlow(fl: Flow, vals: Record<string, string> = {}): Prom
   const errors = problems.filter(p => p.startsWith('错误'))
   if (errors.length) return { ok: false, done: 0, total: fl.steps.length, failedAt: 0, reason: errors.join('；') }
   const steps = expandCalls(fill(fl.steps, vals), all)
-  const r = await Phone.flowRun({ name: fl.name, steps, fast: !!fl.fast }) as unknown as RunResult
+  const r = await Phone.flowRun({ name: fl.name, steps, fast: fl.fast ?? true }) as unknown as RunResult
   const i = all.findIndex(x => x.id === fl.id)
   if (i >= 0) { all[i] = { ...all[i], runs: all[i].runs + 1, lastOk: r.ok }; saveFlows(all) }
   return r
