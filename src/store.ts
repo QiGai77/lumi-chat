@@ -1,5 +1,5 @@
 import type { Msg, Tier } from './api'
-export interface Conv { id: string; title: string; tier: Tier; updated: number; messages: Msg[]; agent?: string; project?: string; task?: string; char?: string }
+export interface Conv { id: string; title: string; tier: Tier; updated: number; messages: Msg[]; agent?: string; project?: string; task?: string; char?: string; phone?: boolean }
 export interface Usage { day: string; cost: number; tokens: number }
 const CK = 'lumi.convs', UK = 'lumi.usage'
 export const loadConvs = (): Conv[] => { try { return JSON.parse(localStorage.getItem(CK) || '[]') } catch { return [] } }

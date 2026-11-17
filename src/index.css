@@ -585,3 +585,36 @@ q-rp{color:#b8452f;font-weight:500}
 .rp-fold>button svg:last-child{transition:transform .2s}
 .rp-fold.open>button svg:last-child{transform:rotate(180deg)}
 .rp-fold-body{margin-top:8px;padding:10px 14px;border-left:2px solid rgba(224,88,62,.3);color:var(--label2);font-size:14px}
+
+/* ---------- v0.14 预览 / 手机 / 存储 */
+.md-code-head>span{flex:1}
+.md-code-head .md-prev{margin-right:14px;color:#ffb9a6}
+.pv{position:fixed;inset:0;z-index:80;display:flex;flex-direction:column;background:rgba(20,26,38,.35);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);animation:fadeIn .2s}
+.pv-bar{display:flex;align-items:center;gap:6px;padding:calc(env(safe-area-inset-top) + 10px) 12px 10px;background:rgba(255,255,255,.82);-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);box-shadow:0 1px 0 rgba(20,26,38,.06)}
+.pv-bar .t16{flex:1;margin-left:4px}
+.pv-seg{display:flex;background:rgba(20,26,38,.06);border-radius:12px;padding:2px}
+.pv-seg button{width:34px;height:30px;border-radius:10px;display:grid;place-items:center;color:var(--label2)}
+.pv-seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.pv-stage{flex:1;overflow:auto;display:flex;justify-content:center;padding:14px}
+.pv-frame{border:0;background:#fff;border-radius:18px;box-shadow:0 20px 50px -20px rgba(0,0,0,.35);height:100%;min-height:400px;transition:width .25s}
+.pv-toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 28px);transform:translateX(-50%);z-index:90;background:var(--ink);color:#fff;font-size:14px;padding:10px 16px;border-radius:18px}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.steps{margin:2px 0 10px;border-radius:16px;background:rgba(255,255,255,.55);box-shadow:inset 0 0 0 1px rgba(255,255,255,.85);overflow:hidden}
+.steps>button{width:100%;display:flex;align-items:center;gap:8px;padding:9px 12px;font-size:13px;color:var(--label2)}
+.steps>button .grow{text-align:left}
+.steps ol{list-style:none;margin:0;padding:0 12px 10px;display:flex;flex-direction:column;gap:6px}
+.steps li{display:flex;gap:8px;font-size:13px;align-items:flex-start}
+.steps li .sd{width:18px;height:18px;border-radius:9px;flex:none;display:grid;place-items:center;background:rgba(72,150,90,.14);color:#3b7d4a;margin-top:1px}
+.steps li.bad .sd{background:rgba(196,60,42,.12);color:#c43c2a}
+.steps li .sr{color:var(--label3);font-size:12px;white-space:pre-wrap;max-height:3.6em;overflow:hidden}
+.dev-card{background:var(--card);border:1px solid var(--card-line);box-shadow:var(--warm-shadow);border-radius:24px;padding:16px;display:flex;flex-direction:column;gap:12px;margin-bottom:14px}
+.dev-top{display:flex;align-items:center;gap:12px}
+.dev-top .grow{min-width:0}
+.pill-st{font-size:12px;padding:3px 10px;border-radius:10px;background:rgba(20,26,38,.06);color:var(--label2);flex:none}
+.pill-st.on{background:rgba(72,150,90,.14);color:#3b7d4a}
+.dev-acts{display:flex;gap:8px;flex-wrap:wrap}
+.dev-steps{margin:0;padding-left:20px;font-size:13.5px;color:var(--label2);line-height:1.7}
+.mini-row{display:flex;gap:8px}.mini-row .inp{flex:1;min-width:0}
+.shell-out{font-family:var(--mono,ui-monospace,monospace);font-size:12px;background:#141a26;color:#e9e2d8;border-radius:14px;padding:10px 12px;white-space:pre-wrap;max-height:220px;overflow:auto}
+.file-row{display:flex;align-items:center;gap:10px}
+.phone-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:10px;background:rgba(224,88,62,.1);color:var(--accent)}

@@ -8,10 +8,12 @@ import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
 import { AGENTS, agentById, type Agent } from './agents'
 import { RpView } from './rp'
+import { Phone, isNative, runTool, toolSpecs, toStep } from './phone'
+import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
 
-type View = 'home' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
+type View = 'home' | 'phone' | 'chars' | `char:${string}` | 'skills' | 'mcp' | 'tasks' | 'projects' | `project:${string}` | 'me' | 'fav' | 'wallet' | 'settings'
 type Gen = 'chat' | 'image' | 'video'
 const GEN_LABEL: Record<Gen, string> = { chat: '对话', image: '生成图片', video: '生成视频' }
 const QUICK: [string, string][] = [
@@ -57,6 +59,28 @@ export default function App() {
   const [chars, setCharsS] = useState<Character[]>(loadChars)
   const setChars = (fn: (c: Character[]) => Character[]) => setCharsS(cs => { const n = fn(cs); saveChars(n); return n })
   const editing = view.startsWith('char:') ? chars.find(c => c.id === view.slice(5)) : undefined
+  // 绑定了手机文件夹的项目：对话变化后存成 Markdown（防抖 1.5 秒，内容没变不重写）
+  const syncT = useRef(new Map<string, number>()), synced = useRef(new Map<string, string>())
+  useEffect(() => {
+    if (!isNative) return
+    for (const c of convs) {
+      const p = c.project ? projects.find(x => x.id === c.project) : undefined
+      if (!p?.folder || !c.messages.length) continue
+      const md = `# ${c.title}\n\n` + c.messages.map(m => `## ${m.role === 'user' ? '我' : MODEL_NAME[asTier(m.tier || c.tier)]}\n\n${m.content}`).join('\n\n')
+      if (synced.current.get(c.id) === md) continue
+      window.clearTimeout(syncT.current.get(c.id))
+      syncT.current.set(c.id, window.setTimeout(() => {
+        synced.current.set(c.id, md)
+        Phone.writeText({ path: `${p.folder}/对话/${c.title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40)}-${c.id.slice(0, 6)}.md`, text: md }).catch(() => {})
+        Phone.writeText({ path: `${p.folder}/.lumi/${c.id}.json`, text: JSON.stringify(c) }).catch(() => {})
+      }, 1500))
+    }
+    for (const p of projects) if (p.folder && synced.current.get('p' + p.id) !== p.instructions + p.name) {
+      synced.current.set('p' + p.id, p.instructions + p.name)
+      Phone.writeText({ path: `${p.folder}/.lumi/project.json`, text: JSON.stringify(p) }).catch(() => {})
+      Phone.writeText({ path: `${p.folder}/项目说明.md`, text: `# ${p.name}\n\n${p.instructions || '（还没有写说明）'}\n` }).catch(() => {})
+    }
+  }, [convs, projects])
   const go = (v: View) => { setView(v); setOpenId(null); shut() }
   const openConv = (id: string) => { setOpenId(id); shut() }
   const newChat = (first?: Pending, extra?: { agent?: Agent; project?: string; char?: Character }) => {
@@ -111,6 +135,7 @@ export default function App() {
               {view === 'home' && <><div className="home-top">{menuBtn}</div>
                 <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
                   onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
+              {view === 'phone' && <>{head('手机连接', '无障碍、无线调试 ADB 和手机存储')}<PhonePage /></>}
               {view === 'chars' && <>{head('角色', '和角色卡里的人物沉浸式聊天，支持导入酒馆角色卡')}<CharsPage chars={chars} settings={settings}
                 add={c => setChars(cs => [c, ...cs])} onChat={c => newChat(undefined, { char: c })} onEdit={c => go(`char:${c.id}`)} convs={convs} onOpen={openConv} /></>}
               {view.startsWith('char:') && <>{back('chars', editing?.name || '新角色')}<CharEdit key={view} c={editing || { ...blankChar(), id: view.slice(5) }}
@@ -119,7 +144,7 @@ export default function App() {
               {view === 'skills' && <>{head('技能', '预设好角色和方法，点开就能用')}<Agents onPick={a => newChat(undefined, { agent: a })} /></>}
               {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<McpPage servers={servers} setServers={setServers} /></>}
               {view === 'tasks' && <>{head('定时任务', '到点自动提问，结果存成一段新对话')}<TasksPage tasks={tasks} setTasks={setTasks} onRun={runTask} onOpen={openConv} /></>}
-              {view === 'projects' && <>{head('项目', '把相关对话放在一起，共用一套说明')}<ProjectsPage projects={projects} setProjects={setProjects} convs={convs} onOpen={p => go(`project:${p}`)} /></>}
+              {view === 'projects' && <>{head('项目', '把相关对话放在一起，共用一套说明')}<ProjectsPage projects={projects} setProjects={setProjects} convs={convs} onOpen={p => go(`project:${p}`)} onImport={(ps, cs) => { setProjects(a => [...a.filter(x => !ps.some(y => y.id === x.id)), ...ps]); setConvs(a => [...cs.filter(c => !a.some(x => x.id === c.id)), ...a].sort((x, y) => y.updated - x.updated)) }} /></>}
               {proj && <>{back('projects', proj.name)}<ProjectPage p={proj} convs={convs.filter(c => c.project === proj.id)}
                 save={np => setProjects(ps => ps.map(x => x.id === np.id ? np : x))} remove={() => { setProjects(ps => ps.filter(x => x.id !== proj.id)); go('projects') }}
                 onNew={() => newChat(undefined, { project: proj.id })} onOpen={openConv} /></>}
@@ -134,6 +159,7 @@ export default function App() {
         {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
           project={projects.find(p => p.id === open.project)} onMenu={() => setSide(true)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
       </main>
+      <Preview />
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
         plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} />
     </div>
@@ -157,6 +183,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, onClo
       </div>
       <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
       {item('chars', 'mask', '角色', 'rose')}
+      {item('phone', 'phone', '手机连接', 'sky')}
       {item('skills', 'spark', '技能', 'plum')}
       {item('mcp', 'plug', 'MCP', 'sky')}
       {item('tasks', 'clock', '定时任务', 'gold')}
@@ -332,8 +359,26 @@ function TasksPage({ tasks, setTasks, onRun, onOpen }: { tasks: Task[]; setTasks
 
 /* ---------------- 项目 */
 const PTONES: Project['tone'][] = ['coral', 'sage', 'gold', 'plum']
-function ProjectsPage({ projects, setProjects, convs, onOpen }: { projects: Project[]; setProjects: (f: (p: Project[]) => Project[]) => void; convs: Conv[]; onOpen: (id: string) => void }) {
+function ProjectsPage({ projects, setProjects, convs, onOpen, onImport }: { projects: Project[]; setProjects: (f: (p: Project[]) => Project[]) => void; convs: Conv[]; onOpen: (id: string) => void; onImport: (p: Project[], c: Conv[]) => void }) {
   const [name, setName] = useState<string | null>(null)
+  const [imp, setImp] = useState('')
+  const importAll = async () => {
+    setImp('正在读取…')
+    try {
+      let st = await Phone.folderStatus(); if (!st.linked) st = await Phone.pickFolder()
+      const dirs = (await Phone.list({ path: '项目' })).files.filter(f => f.dir)
+      const ps: Project[] = [], cs: Conv[] = []
+      for (const d of dirs) {
+        try {
+          const p = JSON.parse((await Phone.readText({ path: `项目/${d.name}/.lumi/project.json` })).text) as Project
+          ps.push({ ...p, folder: `项目/${d.name}` })
+          for (const f of (await Phone.list({ path: `项目/${d.name}/.lumi` })).files) if (f.name.endsWith('.json') && f.name !== 'project.json')
+            try { cs.push({ ...JSON.parse((await Phone.readText({ path: `项目/${d.name}/.lumi/${f.name}` })).text), project: p.id }) } catch { /* */ }
+        } catch { /* 不是 Lumi 的项目文件夹 */ }
+      }
+      onImport(ps, cs); setImp(ps.length ? `导入了 ${ps.length} 个项目、${cs.length} 段对话` : '这个文件夹的「项目」里没有找到栖语的项目')
+    } catch (e) { setImp((e as Error).message) }
+  }
   return (
     <section className="fade">
       {projects.length === 0 && name === null && <div className="empty-card"><GlassIcon n="folder" tone="sage" s={56} /><div>还没有项目</div><span className="t13">比如「毕业论文」「求职」，对话会共用项目说明</span></div>}
@@ -344,6 +389,8 @@ function ProjectsPage({ projects, setProjects, convs, onOpen }: { projects: Proj
           <Icon n="right" s={16} w={2} c="var(--label3)" />
         </button>))}
       </div>
+      {isNative && <button className="btn-ghost" style={{ margin: '4px 0 12px' }} onClick={importAll}><Icon n="download" s={16} w={2} />从手机存储导入项目</button>}
+      {imp && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{imp}</div>}
       {name !== null ? (
         <div className="card-row form" style={{ marginTop: 12 }}>
           <input className="inp" autoFocus placeholder="项目名称" value={name} onChange={e => setName(e.target.value)} />
@@ -363,6 +410,7 @@ function ProjectPage({ p, convs, save, remove, onNew, onOpen }: { p: Project; co
       <div className="sec">项目说明 · 这个项目里的每段对话都会带上</div>
       <textarea className="inp big" rows={4} placeholder="比如：我在写关于城市更新的硕士论文，回答用学术口吻，引用给出处。" value={p.instructions} onChange={e => save({ ...p, instructions: e.target.value })} />
       <button className="add-btn solid press" onClick={onNew}><Icon n="compose" s={18} w={2} />在项目里新建对话</button>
+      {isNative && <ProjectStore p={p} save={save} />}
       <div className="sec">对话 · {convs.length}</div>
       {convs.length === 0 ? <div className="empty">还没有对话</div> : (
         <div className="list">{convs.map(c => (
@@ -378,7 +426,7 @@ function ProjectPage({ p, convs, save, remove, onNew, onOpen }: { p: Project; co
 }
 
 /* ---------------- composer card (home) */
-function GenMenu({ show, gen, setGen, onClose, onMode }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void }) {
+function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void; phone?: () => void; phoneOn?: boolean }) {
   return <>
     {show && <div className="gen-scrim" onClick={onClose} />}
     <div className={`gen-menu ${show ? 'show' : ''}`}>
@@ -387,6 +435,7 @@ function GenMenu({ show, gen, setGen, onClose, onMode }: { show: boolean; gen: G
           <span className="gi"><Icon n={g === 'chat' ? 'chat' : g === 'image' ? 'image' : 'film'} s={18} w={2} /></span>{GEN_LABEL[g]}
           {gen === g && <Icon n="check" s={16} w={2.4} />}
         </button>))}
+      {phone && <button onClick={() => { onClose(); phone() }}><span className="gi"><Icon n="phone" s={18} w={2} /></span>手机操控{phoneOn && <Icon n="check" s={16} w={2.4} />}</button>}
       <button onClick={() => { onClose(); onMode() }}><span className="gi"><Icon n="spark" s={18} w={2} /></span>选择模式</button>
     </div>
   </>
@@ -515,6 +564,169 @@ function Favs({ convs, onOpen, onUnfav }: { convs: Conv[]; onOpen: (id: string) 
 }
 
 /* ---------------- 智能体 */
+function ProjectStore({ p, save }: { p: Project; save: (p: Project) => void }) {
+  const [files, setFiles] = useState<{ name: string; dir: boolean; size: number }[]>([])
+  const [sub, setSub] = useState('')
+  const [msg, setMsg] = useState('')
+  const load = async (d = sub) => { if (!p.folder) return; try { setFiles((await Phone.list({ path: p.folder + (d ? '/' + d : '') })).files.filter(f => !f.name.startsWith('.')).sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name))) } catch (e) { setMsg((e as Error).message) } }
+  useEffect(() => { load() }, [p.folder, sub]) // eslint-disable-line react-hooks/exhaustive-deps
+  const link = async () => {
+    try { let st = await Phone.folderStatus(); if (!st.linked) st = await Phone.pickFolder(); if (st.linked) save({ ...p, folder: `项目/${p.name.replace(/[\\/:*?"<>|]/g, '_')}` }) } catch (e) { setMsg((e as Error).message) }
+  }
+  const open = async (f: { name: string; dir: boolean }) => {
+    if (f.dir) { setSub(sub ? sub + '/' + f.name : f.name); return }
+    if (/\.html?$/i.test(f.name)) { const t = (await Phone.readText({ path: `${p.folder}/${sub ? sub + '/' : ''}${f.name}` })).text; window.dispatchEvent(new CustomEvent('lumi-preview', { detail: { html: t } })) }
+  }
+  return <>
+    <div className="sec">手机存储{p.folder ? ` · ${p.folder}` : ''}</div>
+    {!p.folder ? <div className="dev-card"><div className="t13">把这个项目存到手机：每段对话自动存成 Markdown，模型写的网页和文件也放在这里，换手机或重装后可以导入回来。</div>
+      <div className="dev-acts"><button className="btn-ink" onClick={link}>存到手机</button></div></div>
+      : <div className="list">
+        {sub && <button className="row press-row" onClick={() => setSub(sub.split('/').slice(0, -1).join('/'))}><span className="ico"><Icon n="back" s={16} w={2} /></span><span className="grow t16">返回上一级</span></button>}
+        {files.length === 0 && <div className="row"><span className="grow t13">还没有文件</span></div>}
+        {files.map(f => <button key={f.name} className="row press-row" onClick={() => open(f)}><span className="ico"><Icon n={f.dir ? 'folder' : /\.html?$/i.test(f.name) ? 'play' : 'doc'} s={16} w={2} /></span>
+          <span className="grow t16 ell">{f.name}</span><span className="t12">{f.dir ? '' : f.size > 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${f.size} B`}</span></button>)}
+        <button className="row press-row" onClick={() => { if (confirm('停止把这个项目存到手机？已存的文件会保留。')) save({ ...p, folder: undefined }) }}><span className="grow t13 danger">停止保存到手机</span></button>
+      </div>}
+    {msg && <div className="t13 danger">{msg}</div>}
+  </>
+}
+
+/* ---------------- 手机操控 */
+const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替用户操作手机。
+做法：
+1. 先 phone_screen 看清当前屏幕，再根据元素编号 phone_tap / phone_input / phone_scroll；每次操作后界面会变，需要时重新 phone_screen。
+2. 打开应用用 phone_open_app；返回、回主屏用 phone_key。
+3. phone_shell 是 ADB 命令，只在用户已连接 ADB 且确实需要时用（比如查电量 dumpsys battery、截屏 screencap）。不要执行删除数据、卸载应用、改系统设置之类的危险命令，除非用户明确要求。
+4. 涉及付款、发消息给别人、删除内容等不可撤回的操作，执行前先停下来问用户确认。
+5. 做完后用一两句话告诉用户结果。`
+
+function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
+  const [open, setOpen] = useState(false)
+  const cur = steps[steps.length - 1]
+  return (
+    <div className="steps">
+      <button onClick={() => setOpen(!open)}><Icon n="phone" s={15} w={2} />
+        <span className="grow ell">{live && cur ? (cur.result === undefined ? `正在${cur.label}…` : cur.label) : `操作了手机 · ${steps.length} 步`}</span>
+        <Icon n="down" s={14} w={2.2} /></button>
+      {open && <ol>{steps.map((st, i) => (
+        <li key={i} className={st.ok === false ? 'bad' : ''}><span className="sd"><Icon n={st.ok === false ? 'x' : 'check'} s={11} w={2.8} /></span>
+          <div className="grow"><div>{st.label}</div>{st.result && st.name !== 'phone_screen' && <div className="sr">{st.result}</div>}</div></li>))}</ol>}
+    </div>
+  )
+}
+
+function Preview() {
+  const [html, setHtml] = useState<string | null>(null)
+  const [w, setW] = useState<'m' | 't' | 'f'>('m')
+  const [k, setK] = useState(0)
+  const [toast, setToast] = useState('')
+  useEffect(() => {
+    const on = (e: Event) => { setHtml((e as CustomEvent).detail.html); setW(window.innerWidth < 700 ? 'f' : 'm') }
+    window.addEventListener('lumi-preview', on); return () => window.removeEventListener('lumi-preview', on)
+  }, [])
+  if (html == null) return null
+  const say = (t: string) => { setToast(t); setTimeout(() => setToast(''), 1800) }
+  const save = async () => {
+    if (!isNative) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' })); a.download = 'lumi-preview.html'; a.click(); return }
+    try {
+      let st = await Phone.folderStatus()
+      if (!st.linked) st = await Phone.pickFolder()
+      const t = (html.match(/<title>([^<]{1,40})<\/title>/i)?.[1] || '页面').replace(/[\\/:*?"<>|]/g, '_')
+      const d = new Date(), name = `网页/${t}-${d.getMonth() + 1}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}.html`
+      await Phone.writeText({ path: name, text: html }); say(`已保存到 ${st.name || '手机'}/${name}`)
+    } catch (e) { say((e as Error).message) }
+  }
+  return (
+    <div className="pv">
+      <div className="pv-bar">
+        <button className="icon-btn" onClick={() => setHtml(null)} aria-label="关闭"><Icon n="x" s={20} w={2.2} /></button>
+        <div className="t16 b">预览</div>
+        <div className="pv-seg">{(['m', 't', 'f'] as const).map(x => <button key={x} className={w === x ? 'on' : ''} onClick={() => setW(x)} aria-label={x}><Icon n={x === 'm' ? 'phone' : x === 't' ? 'doc' : 'monitor'} s={16} w={2} /></button>)}</div>
+        <button className="icon-btn" onClick={() => setK(k + 1)} aria-label="刷新"><Icon n="redo" s={18} w={2} /></button>
+        <button className="icon-btn" onClick={save} aria-label="保存"><Icon n="download" s={18} w={2} /></button>
+      </div>
+      <div className="pv-stage">
+        <iframe key={k} className="pv-frame" title="预览" srcDoc={html} sandbox="allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock allow-downloads"
+          style={{ width: w === 'm' ? 390 : w === 't' ? 768 : '100%' }} />
+      </div>
+      {toast && <div className="pv-toast">{toast}</div>}
+    </div>
+  )
+}
+
+function PhonePage() {
+  const [a11y, setA11y] = useState<boolean | null>(null)
+  const [adb, setAdb] = useState<{ connected: boolean; pairPort: number; sdk: number } | null>(null)
+  const [folder, setFolder] = useState<{ linked: boolean; name?: string } | null>(null)
+  const [msg, setMsg] = useState('')
+  const [port, setPort] = useState(''), [code, setCode] = useState('')
+  const [cmd, setCmd] = useState('getprop ro.product.model'), [out, setOut] = useState('')
+  const [busy, setBusy] = useState('')
+  const refresh = async () => {
+    if (!isNative) return
+    try { setA11y((await Phone.a11yStatus()).enabled) } catch { setA11y(false) }
+    try { setAdb(await Phone.adbStatus()) } catch { /* */ }
+    try { setFolder(await Phone.folderStatus()) } catch { /* */ }
+  }
+  useEffect(() => {
+    refresh()
+    if (!isNative) return
+    const vis = () => { if (!document.hidden) refresh() }
+    document.addEventListener('visibilitychange', vis)
+    const sub = Phone.addListener('adb', d => {
+      setMsg(({ found: `找到配对端口 ${d.msg}，下拉通知栏输入配对码`, pairing: '正在配对…', paired: '配对成功，点「连接」', connected: '已连接 ADB', error: '配对失败：' + d.msg } as Record<string, string>)[d.state] || '')
+      refresh()
+    })
+    return () => { document.removeEventListener('visibilitychange', vis); sub.then(s => s.remove()) }
+  }, [])
+  const run = async (k: string, f: () => Promise<unknown>) => { setBusy(k); setMsg(''); try { await f() } catch (e) { setMsg((e as Error).message) } finally { setBusy(''); refresh() } }
+  if (!isNative) return <section className="fade"><div className="empty-card"><GlassIcon n="phone" tone="sky" s={56} /><div className="t16 b">只有安卓 App 里可以用</div><div className="t13">装上栖语 Lumi 的 APK 后，在这里连接手机</div></div></section>
+  return (
+    <section className="fade">
+      <div className="dev-card">
+        <div className="dev-top"><GlassIcon n="shield" tone="sage" s={44} /><div className="grow"><div className="t16 b">无障碍</div><div className="t13">读屏幕、点击、输入、滑动，不需要电脑</div></div>
+          <span className={`pill-st ${a11y ? 'on' : ''}`}>{a11y ? '已开启' : '未开启'}</span></div>
+        {!a11y && <ol className="dev-steps"><li>点下面的按钮打开系统无障碍设置</li><li>找到「已下载的应用」里的「栖语 Lumi 手机操控」</li><li>打开开关，回到这里</li></ol>}
+        <div className="dev-acts"><button className={a11y ? 'btn-ghost' : 'btn-ink'} onClick={() => Phone.openA11ySettings()}>{a11y ? '无障碍设置' : '去开启'}</button></div>
+      </div>
+
+      <div className="dev-card">
+        <div className="dev-top"><GlassIcon n="terminal" tone="plum" s={44} /><div className="grow"><div className="t16 b">自建 ADB</div><div className="t13">用无线调试连本机，能执行 shell 命令（Android 11 及以上）</div></div>
+          <span className={`pill-st ${adb?.connected ? 'on' : ''}`}>{adb?.connected ? '已连接' : '未连接'}</span></div>
+        {!adb?.connected && <ol className="dev-steps">
+          <li>开发者选项里打开「无线调试」（先连上 Wi-Fi）</li>
+          <li>点「开始配对」，再进 无线调试 →「使用配对码配对设备」</li>
+          <li>下拉通知栏，在栖语 Lumi 的通知里填 6 位配对码</li>
+          <li>配对成功后会自动连接；只需配对一次</li></ol>}
+        <div className="dev-acts">
+          {!adb?.connected && <button className="btn-ink" disabled={!!busy} onClick={() => run('pair', async () => { await Phone.adbPair({}); setMsg('正在找配对服务…'); await Phone.openDevSettings() })}>开始配对</button>}
+          <button className="btn-ghost" disabled={!!busy} onClick={() => run('con', async () => { await Phone.adbConnect({}); setMsg('已连接 ADB') })}>{busy === 'con' ? '连接中…' : adb?.connected ? '重新连接' : '连接'}</button>
+          {adb?.connected && <button className="btn-ghost" onClick={() => run('dis', () => Phone.adbDisconnect())}>断开</button>}
+          <button className="btn-ghost" onClick={() => Phone.openDevSettings()}>开发者选项</button>
+        </div>
+        {!adb?.connected && <details><summary className="t13">分屏或手动配对</summary>
+          <div className="mini-row" style={{ marginTop: 8 }}><input className="inp" inputMode="numeric" placeholder="配对端口" value={port} onChange={e => setPort(e.target.value)} />
+            <input className="inp" inputMode="numeric" placeholder="配对码" value={code} onChange={e => setCode(e.target.value)} />
+            <button className="btn-ink" disabled={!port || !code} onClick={() => run('mp', () => Phone.adbPair({ port: Number(port), code }))}>配对</button></div></details>}
+        {adb?.connected && <>
+          <div className="mini-row"><input className="inp" value={cmd} onChange={e => setCmd(e.target.value)} placeholder="shell 命令" />
+            <button className="btn-ink" disabled={!!busy} onClick={() => run('sh', async () => setOut((await Phone.adbShell({ cmd })).out || '（没有输出）'))}>{busy === 'sh' ? '…' : '执行'}</button></div>
+          {out && <pre className="shell-out">{out}</pre>}</>}
+      </div>
+
+      <div className="dev-card">
+        <div className="dev-top"><GlassIcon n="folder" tone="gold" s={44} /><div className="grow"><div className="t16 b">手机存储</div><div className="t13 ell">{folder?.linked ? `已选择：${folder.name}` : '选一个文件夹，项目、对话和网页都存在这里'}</div></div>
+          <span className={`pill-st ${folder?.linked ? 'on' : ''}`}>{folder?.linked ? '已选择' : '未选择'}</span></div>
+        <div className="dev-acts"><button className={folder?.linked ? 'btn-ghost' : 'btn-ink'} onClick={() => run('f', () => Phone.pickFolder())}>{folder?.linked ? '换一个文件夹' : '选择文件夹'}</button>
+          {folder?.linked && <button className="btn-ghost danger" onClick={() => run('uf', () => Phone.unlinkFolder())}>取消关联</button>}</div>
+      </div>
+      {msg && <div className="imp-msg ok" style={{ background: /失败|不|没/.test(msg) ? '#fdeceb' : undefined, color: /失败|不|没/.test(msg) ? '#b23a2a' : undefined }}>{msg}</div>}
+      <div className="t13" style={{ marginTop: 12 }}>在对话里点「+」→「手机操控」，模型就能用上面这些能力。付款、发消息、删除前会先问你。</div>
+    </section>
+  )
+}
+
 /* ---------------- 角色扮演 */
 /** 英文卡 + 长英文开场时，系统提示里的语言要求常被忽略；只在发给模型的最后一条用户消息后附一句，不存进对话。 */
 function langHint(ms: Msg[]): Msg[] {
@@ -658,6 +870,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const composing = useRef(false)
   const agent = agentById(conv.agent)
   const char = charById(conv.char)
+  const folder = project?.folder
+  const toolNames = [...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : [])]
   const rpUser = settings.rpUser || '用户'
   useEffect(() => { if (pinned.current) scroller.current?.scrollTo({ top: 1e9 }) }, [conv.messages])
 
@@ -691,7 +905,10 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     update(c => ({ ...c, title, tier, updated: Date.now(), messages: [...base, { role: 'assistant', content: '', tier }] }))
     const t0 = performance.now()
     let thinkMs = 0
-    const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '', settings.genUI ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+    const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '',
+      conv.phone ? PHONE_PROMPT : '', folder ? `这个项目绑定了手机里的文件夹「${folder}」。用户要你写文件、做网页或保存内容时，用 phone_save 存进去（路径相对这个文件夹，比如 pages/index.html），存完告诉用户文件名。` : '',
+      settings.genUI && !conv.phone ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+    if (toolNames.length && !char) { await agentLoop(base, system); return }
     try {
       const r = await streamChat({
         settings, tier, think, messages: char ? (settings.rpMyLang !== false ? langHint : (x: Msg[]) => x)(base.map(x => ({ ...x, content: runRegex(x.content, char, x.role === 'user' ? 'user' : 'ai', 'prompt', rpUser) }))) : base, signal: ctrl.current.signal, system, roleplay: !!char,
@@ -707,6 +924,43 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
       else setErr(friendly(e))
     } finally { setBusy(false); ctrl.current = null }
   }
+  /** 工具循环：模型要调用工具就执行，把结果喂回去，直到给出最终回答（最多 30 步）。 */
+  const agentLoop = async (base: Msg[], system?: string) => {
+    const tools = toolSpecs(toolNames)
+    const raw: ApiMsg[] = base.filter(m => !m.media).map(m => ({ role: m.role, content: m.content }))
+    const steps: Step[] = []
+    const t0 = performance.now()
+    let first = 0, tok = 0
+    try {
+      for (let round = 0; round < 30; round++) {
+        const r = await streamChat({
+          settings, tier, think, messages: base, raw, tools, signal: ctrl.current!.signal, system,
+          onDelta: (t, rs) => update(c => ({ ...c, messages: [...base, { role: 'assistant', content: t, reasoning: rs, tier, steps: [...steps] }] })),
+        })
+        tok += r.promptTokens + r.completionTokens
+        if (!first) first = r.firstTokenMs
+        if (!r.toolCalls.length) break
+        raw.push({ role: 'assistant', content: r.text, tool_calls: r.toolCalls, ...(r.reasoning ? { reasoning_content: r.reasoning } : {}) })
+        for (const tc of r.toolCalls) {
+          let args: Record<string, unknown> = {}
+          try { args = JSON.parse(tc.function.arguments || '{}') } catch { /* */ }
+          steps.push({ ...toStep(tc.function.name, args, '', true), result: undefined })
+          update(c => ({ ...c, messages: [...base, { role: 'assistant', content: r.text, tier, steps: [...steps] }] }))
+          if (ctrl.current?.signal.aborted) throw new DOMException('stop', 'AbortError')
+          const out = isNative ? await runTool(tc.function.name, args, folder) : '出错了：只有安卓 App 里才能操作手机'
+          steps[steps.length - 1] = toStep(tc.function.name, args, out, !out.startsWith('出错了') && !/失败|没打开|不能/.test(out.slice(0, 12)))
+          raw.push({ role: 'tool', tool_call_id: tc.id, content: out })
+          if (/^phone_(tap|open_app|key|swipe|scroll|input)$/.test(tc.function.name)) await new Promise(ok => setTimeout(ok, 700))
+        }
+        update(c => ({ ...c, messages: [...base, { role: 'assistant', content: '', tier, steps: [...steps] }] }))
+      }
+      addUsage(0, tok)
+      setLast(m => ({ ...m, ms: first, steps: [...steps], thinkMs: m.reasoning ? performance.now() - t0 : undefined }))
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') setLast(m => ({ ...m, stopped: true, steps: [...steps] }))
+      else setErr(friendly(e))
+    } finally { setBusy(false); ctrl.current = null }
+  }
   const started = useRef(false)
   useEffect(() => {
     if (pending && !started.current) { started.current = true; const p = pending; clearPending(); send(undefined, p.text, p.gen) }
@@ -717,7 +971,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const greets = char ? greetings(char, rpUser) : []
   const gi = char && conv.messages.length === 1 ? Math.max(0, greets.indexOf(conv.messages[0].content)) : -1
   const swipe = (d: number) => { const n = (gi + d + greets.length) % greets.length; update(c => ({ ...c, messages: [{ ...c.messages[0], content: greets[n] }] })) }
-  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${char ? ' · 角色扮演' : ''}${agent ? ' · ' + agent.name : ''}${project ? ' · ' + project.name : ''}`
+  const sub = `${MODEL_NAME[tier]}${think ? ' · 深度思考' : ''}${char ? ' · 角色扮演' : ''}${conv.phone ? ' · 手机操控' : ''}${agent ? ' · ' + agent.name : ''}${project ? ' · ' + project.name : ''}`
 
   return (
     <div className="chat slide-in">
@@ -737,6 +991,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
                 {m.reasoning && <details className="think" open={busy && i === last && !m.content}>
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
+                {m.steps?.length ? <Steps steps={m.steps} live={busy && i === last} /> : null}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : char ? <RpView src={runRegex(m.content, char, 'ai', 'display', rpUser)} streaming={busy && i === last} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
                   {busy && i === last && !m.media && !m.content && !m.reasoning && <span className="caret" />}</div>
                 {gi >= 0 && i === 0 && greets.length > 1 && <div className="swipe"><button onClick={() => swipe(-1)} aria-label="上一个开场"><Icon n="left" s={16} w={2.2} /></button>
@@ -761,10 +1016,11 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>
-      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} /></div>
+      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} phone={char ? undefined : () => update(c => ({ ...c, phone: !c.phone }))} phoneOn={conv.phone} /></div>
       <div className="composer">
         <Glass className="c-field" radius={28}>
           <button className={`c-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={21} w={2} /></button>
+          {conv.phone && <button className="gen-chip" onClick={() => update(c => ({ ...c, phone: false }))}><Icon n="phone" s={14} w={2.2} />手机操控<Icon n="x" s={12} w={2.4} /></button>}
           {gen !== 'chat' && <button className="gen-chip" onClick={() => setGen('chat')}><Icon n={gen === 'image' ? 'image' : 'film'} s={14} w={2.2} />{GEN_LABEL[gen]}<Icon n="x" s={12} w={2.4} /></button>}
           <textarea rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
             onCompositionStart={() => (composing.current = true)} onCompositionEnd={() => (composing.current = false)}

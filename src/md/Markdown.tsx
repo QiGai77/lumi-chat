@@ -65,6 +65,9 @@ function CodeBlock({ lang, value }: { lang: string; value: string }) {
     <div className="md-code">
       <div className="md-code-head">
         <span>{lang || 'text'}</span>
+        {/^(html?|svg|xml|markup)$/.test(l) && /<(html|body|div|svg|section|main|canvas|style|script|h1|p|button|table)\b/i.test(value) &&
+          <button className="md-prev" onClick={() => window.dispatchEvent(new CustomEvent('lumi-preview', { detail: { html: l === 'svg' && !/<html/i.test(value) ? `<body style="margin:0;display:grid;place-items:center;min-height:100vh">${value}</body>` : value } }))}>
+            <Icon n="play" s={14} w={2} />预览</button>}
         <button onClick={() => { navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1200) }}>
           <Icon n={copied ? 'check' : 'copy'} s={14} w={2} />{copied ? '已复制' : '复制'}
         </button>
