@@ -17,11 +17,12 @@ import java.util.concurrent.TimeUnit;
 public class LumiA11yService extends AccessibilityService {
     static volatile LumiA11yService instance;
     private final List<AccessibilityNodeInfo> nodes = new ArrayList<>();
+    LumiFlow flow;
 
-    @Override protected void onServiceConnected() { instance = this; }
+    @Override protected void onServiceConnected() { instance = this; flow = new LumiFlow(this); }
     @Override public void onDestroy() { instance = null; super.onDestroy(); }
     @Override public boolean onUnbind(android.content.Intent i) { instance = null; return super.onUnbind(i); }
-    @Override public void onAccessibilityEvent(AccessibilityEvent e) { }
+    @Override public void onAccessibilityEvent(AccessibilityEvent e) { if (flow != null) flow.onEvent(e); }
     @Override public void onInterrupt() { }
 
     /** 当前屏幕的可交互元素，一行一个：[编号] 类型 "文字" (描述) {可点/可输入/可滚动} @中心坐标 */
@@ -72,6 +73,16 @@ public class LumiA11yService extends AccessibilityService {
     synchronized AccessibilityNodeInfo node(int id) { return id >= 0 && id < nodes.size() ? nodes.get(id) : null; }
 
     synchronized Rect bounds(int id) { AccessibilityNodeInfo n = node(id); if (n == null) return null; Rect r = new Rect(); n.getBoundsInScreen(r); return r; }
+
+    org.json.JSONObject selFor(int id) {
+        AccessibilityNodeInfo n = node(id);
+        if (n == null || flow == null) return null;
+        org.json.JSONObject o = new org.json.JSONObject();
+        try { o.put("sel", flow.selOf(n)); Rect r = new Rect(); n.getBoundsInScreen(r); android.util.DisplayMetrics m = getResources().getDisplayMetrics();
+            o.put("x", Math.round(r.centerX() * 1000.0 / m.widthPixels) / 1000.0); o.put("y", Math.round(r.centerY() * 1000.0 / m.heightPixels) / 1000.0);
+            CharSequence p = n.getPackageName(); if (p != null) o.put("pkg", p.toString()); } catch (Exception ignored) { }
+        return o;
+    }
 
     boolean click(int id, boolean longPress) {
         AccessibilityNodeInfo n = node(id);

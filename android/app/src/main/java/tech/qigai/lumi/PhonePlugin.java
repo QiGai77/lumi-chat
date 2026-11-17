@@ -68,7 +68,49 @@ public class PhonePlugin extends Plugin {
     }
     @PluginMethod public void click(PluginCall call) {
         LumiA11yService s = svc(call); if (s == null) return;
-        ok(call, s.click(call.getInt("id", -1), call.getBoolean("long", false)), "点不到这个元素，先重新读一下屏幕");
+        int id = call.getInt("id", -1);
+        org.json.JSONObject sel = s.selFor(id);
+        if (!s.click(id, call.getBoolean("long", false))) { call.reject("点不到这个元素，先重新读一下屏幕"); return; }
+        JSObject o = new JSObject(); o.put("ok", true);
+        if (sel != null) try { o.put("step", JSObject.fromJSONObject(sel)); } catch (Exception ignored) { }
+        call.resolve(o);
+    }
+    @PluginMethod public void inputInfo(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        org.json.JSONObject sel = s.selFor(call.getInt("id", -1));
+        JSObject o = new JSObject();
+        if (sel != null) try { o.put("step", JSObject.fromJSONObject(sel)); } catch (Exception ignored) { }
+        call.resolve(o);
+    }
+
+    /* ---------- Flow */
+    @PluginMethod public void flowRun(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        final String name = call.getString("name", "Flow");
+        final org.json.JSONArray steps = call.getArray("steps", new JSArray());
+        LumiAdb.IO.execute(() -> {
+            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps))); }
+            catch (Throwable e) { call.reject("Flow 运行出错：" + e.getMessage()); }
+        });
+    }
+    @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) s.flow.stop = true; call.resolve(); }
+    @PluginMethod public void recordStart(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        s.flow.recordStart(call.getString("pkg", ""), call.getString("app", ""));
+        call.resolve();
+    }
+    @PluginMethod public void recordStatus(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        JSObject o = new JSObject(); o.put("recording", s.flow.recording);
+        try { o.put("steps", new JSArray(s.flow.recorded().toString())); } catch (Exception ignored) { }
+        call.resolve(o);
+    }
+    @PluginMethod public void recordStop(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        s.flow.recording = false; s.flow.hideBar(0);
+        JSObject o = new JSObject();
+        try { o.put("steps", new JSArray(s.flow.recorded().toString())); } catch (Exception ignored) { }
+        call.resolve(o);
     }
     @PluginMethod public void tap(PluginCall call) {
         LumiA11yService s = svc(call); if (s == null) return;
