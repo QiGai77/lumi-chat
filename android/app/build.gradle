@@ -3,6 +3,7 @@ apply plugin: 'com.android.application'
 android {
     namespace = "tech.qigai.lumi"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion = "36.0.0"
     defaultConfig {
         applicationId "tech.qigai.lumi"
         minSdkVersion rootProject.ext.minSdkVersion
