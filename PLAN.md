@@ -45,3 +45,39 @@
 - 2026-11-17 18:25 计划写好；parse/Markdown/genui/media/api 已写，尚未接入 App，未编译验证。
 - 2026-11-17 18:50 全部接入并通过编译；`$$` 单行公式按块级显示；截图自测 Markdown/公式/卡片/钱包正常。版本号 0.7，打 tag v0.7 由 Actions 出 APK。
 - 待验证：真机上壁纸主题、图片/视频接口（取决于网关支持的模型）。
+
+---
+
+# v0.8 改动计划（用户 2026-11-17 18:41）
+
+需求原话：后端适配 sub2api，可以自定义接入 opencode、opendesign 等第三方订阅；API Key 输入框下方有蓝色超链接，点进去直接跳转获取密钥；打包转发成三个模型 Helium / Neon / Argon，按智力打包，只能用这三个；钱包充值改成会员订阅 Pro / Max / Ultra，定价 50 / 100 / 200。
+
+## 后端（不改 Sub2API 源码，只做部署与配置，见 `server/`）
+Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs/COMPOSITE_GROUPS.md）：
+- 上游平台：anthropic、openai、gemini、antigravity、grok、kimi、zhipu、deepseek、minimax、**opencode_go（OpenCode Zen 按量 / Go 订阅）**、command_code、cline、composite。其他任何 OpenAI 兼容的第三方订阅可作为 openai 平台 API Key 账号接入（自定义 base_url）。
+- **Composite 分组 + 路由表**：`public_model` → `target_platform` + `upstream_model`。用它把上游打包成 `helium` / `neon` / `argon` 三个公开模型。
+- **订阅套餐**：分组 `subscription_type=subscription`，绑定支付套餐（易支付 / 支付宝 / 微信 / Stripe），可设日/周/月额度（USD 计）。
+- **`GET /v1/usage?days=14`**（用 API Key 调）：返回 `planName`（分组名）、`subscription`（日/周/月已用与上限、`expires_at`）、`daily_usage`（每日 tokens、cost）。App 钱包直接读它。
+- 用户控制台路由：`/keys`（API 密钥）、`/purchase`（购买/订阅）、`/subscriptions`。
+
+部署：`server/docker-compose.yml`（sub2api + postgres + redis，来自上游 deploy/docker-compose.local.yml）、`server/.env.example`、`server/SETUP.md` 一步步配置：
+1. 添加上游账号（OpenCode / Claude / Codex / Gemini / DeepSeek / 任意 OpenAI 兼容）。
+2. 建三个 composite 订阅分组 `Pro`、`Max`、`Ultra`（分组名即 App 显示的套餐名），每组加路由：
+   | 公开模型 | 定位 | 建议上游（可换） |
+   |---|---|---|
+   | helium | 轻快，日常问答 | deepseek-chat / glm / kimi 等便宜快模型 |
+   | neon | 均衡，写作与代码 | claude-sonnet / gpt-5 级 |
+   | argon | 最强推理 | claude-opus / gpt-5 high / gemini-pro 级 |
+   分组模型白名单只放这三个，用户只能用这三个。
+3. 套餐：Pro ¥50/月、Max ¥100/月、Ultra ¥200/月；额度在分组的月/周/日上限里设（建议 Max ≈ Pro×2.5、Ultra ≈ Pro×6，待用户定）。Pro 是否含 Argon 待用户定（默认：三档都含三个模型，只差额度）。
+4. CORS 放行 App 来源 `https://localhost`、`capacitor://localhost`、`http://localhost`。
+
+## App
+- 模型：删掉经济/极速两档与所有模型名、单价设置，固定 Helium / Neon / Argon（模型面板三张卡，按智力排）。深度思考开关改为发 `reasoning_effort: "high"`。
+- 设置：网关地址 + 一个 API Key；Key 输入框下方蓝色链接「获取密钥 →」打开 `{网关}/keys`（可在高级里改地址）。
+- 钱包 → 会员：当前套餐卡（读 `/v1/usage`：套餐名、到期、本月已用/上限进度）、Pro/Max/Ultra 三张订阅卡（¥50/100/200 每月），「订阅」打开 `{网关}/purchase`；近 14 天用量图表与账单改读网关 `daily_usage`，网关不可达时回退本机记录。
+- 旧设置自动迁移（ecoKey → apiKey）。
+- 版本 0.8，tag v0.8。
+
+## 进度
+- 2026-11-17 18:58 计划写好。
