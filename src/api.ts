@@ -40,7 +40,7 @@ export interface Media { kind: 'image' | 'video'; id: string; prompt: string; st
 export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media }
 
 export async function streamChat(opts: {
-  settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal
+  settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string
   onDelta: (text: string, reasoning: string) => void
 }): Promise<{ promptTokens: number; completionTokens: number; firstTokenMs: number }> {
   const { settings: s, tier, think } = opts
