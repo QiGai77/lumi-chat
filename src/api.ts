@@ -56,6 +56,8 @@ export function loadSettings(): Settings {
 export const gw = (s: Settings) => s.baseUrl.trim().replace(/\/+$/, '')
 export const keyPage = (s: Settings) => s.keyUrl || PLATFORM_URL + '/keys'
 export const purchasePage = (s: Settings) => s.purchaseUrl || PLATFORM_URL + '/upgrade'
+/** 提交反馈（v0.17）：官网表单，生成 GitHub Issue 或复制文本。 */
+export const feedbackPage = () => PLATFORM_URL + '/feedback'
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }

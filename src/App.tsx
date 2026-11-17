@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Glass } from './glass'
 import { GlassIcon, Icon } from './icons'
-import { MODEL_NAME, MODELS, PLANS, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
+import { MODEL_NAME, MODELS, PLANS, PLATFORM_URL, feedbackPage, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
 import { Markdown } from './md/Markdown'
 import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
@@ -9,8 +9,9 @@ import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from 
 import { AGENTS, agentById, type Agent } from './agents'
 import { RpView } from './rp'
 import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
-import { tint, useAppLook } from './appicon'
-import { flowSummary, loadFlows, paramsIn, runFlow, saveFlows, stepLabel, tidy, upsertFlow, type Flow, type FlowStep } from './flow'
+import { FAMILIES, meshBg, tint, useAppLook } from './appicon'
+import { flowSummary, loadFlows, runFlow, runSummary, tidy, upsertFlow, type Flow, type RunResult } from './flow'
+import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
@@ -27,15 +28,20 @@ const USER_NAME = 'Qi'
 const USER_FULL = 'Qi Gai'
 
 interface Pending { text: string; gen: Gen }
+/** 外部链接：安卓里交给系统浏览器，网页版新窗口。官网 platform.qigai.tech 的获取密钥 / 升级会员 / 反馈都走这里。 */
+const openLink = (url: string) => { if (isNative) Phone.openUrl({ url }).catch(() => window.open(url, '_blank', 'noopener')); else window.open(url, '_blank', 'noopener') }
 
 export default function App() {
   const [view, setView] = useState<View>('home')
   const wide = () => window.innerWidth >= 980
   const [side, setSide] = useState(wide)
+  // v0.17：折叠态在手机和桌面都生效——折叠后左侧留一条图标栏（新对话 / 技能 / MCP），状态存在 localStorage。
+  // 手机上点图标栏顶部的按钮展开成完整抽屉；抽屉里再点一次折叠回图标栏；点遮罩关闭则回到完全隐藏的抽屉。
   const [mini, setMini] = useState(() => localStorage.getItem('lumi.sideMini') === '1')
+  const putMini = (n: boolean) => { localStorage.setItem('lumi.sideMini', n ? '1' : '0'); setMini(n) }
   const toggleMini = () => {
-    if (window.innerWidth < 980) { setSide(false); return } // 手机端 mini 不生效，仍是关闭抽屉
-    setMini(m => { const n = !m; localStorage.setItem('lumi.sideMini', n ? '1' : '0'); return n })
+    if (mini) { putMini(false); setSide(true) }
+    else { putMini(true); if (!wide()) setSide(false) }
   }
   const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
@@ -132,10 +138,10 @@ export default function App() {
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${side && mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} mini={mini} onToggleMini={toggleMini} />
+        plan={plan} mini={mini} onToggleMini={toggleMini} onUpgrade={() => openLink(purchasePage(settings))} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
@@ -173,15 +179,15 @@ export default function App() {
       </main>
       <Preview />
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
-        plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} />
+        plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} onUpgrade={() => { setSheet(false); openLink(purchasePage(settings)) }} />
     </div>
   )
 }
 
 /* ---------------- sidebar (ChatGPT 式) */
-function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini, onToggleMini }: {
+function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini, onToggleMini, onUpgrade }: {
   view: View; go: (v: View) => void; convs: Conv[]; openId: string | null; onOpen: (id: string) => void; onNew: () => void
-  onDelete: (id: string) => void; plan: string | null; mini: boolean; onToggleMini: () => void
+  onDelete: (id: string) => void; plan: string | null; mini: boolean; onToggleMini: () => void; onUpgrade: () => void
 }) {
   const [q, setQ] = useState('')
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
@@ -189,23 +195,23 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
     <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) || (v === 'flows' && view.startsWith('flow')) ? 'on' : ''}`} onClick={() => go(v)} title={label}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
   if (mini) {
     return (
-      <aside className="side">
+      <aside className="side rail">
         <div className="s-head">
-          <button className="side-btn" onClick={onToggleMini} aria-label="展开侧栏" title="展开侧栏"><Icon n="side" s={22} w={1.9} /></button>
+          <button className="side-btn" onClick={onToggleMini} aria-label="展开侧栏" title="展开侧栏"><Icon n="sidebar" s={22} w={1.9} /></button>
         </div>
-        <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新建对话"><GlassIcon n="compose" tone="coral" s={30} /></button>
-        <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能"><GlassIcon n="spark" tone="plum" s={30} /></button>
-        <button className={`s-item ${view === 'mcp' ? 'on' : ''}`} onClick={() => go('mcp')} title="MCP"><GlassIcon n="plug" tone="sky" s={30} /></button>
+        <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新对话" aria-label="新对话"><GlassIcon n="compose" tone="coral" s={30} /><span className="rail-l">新对话</span></button>
+        <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能" aria-label="技能"><GlassIcon n="spark" tone="plum" s={30} /><span className="rail-l">技能</span></button>
+        <button className={`s-item ${view === 'mcp' ? 'on' : ''}`} onClick={() => go('mcp')} title="MCP" aria-label="MCP"><GlassIcon n="plug" tone="sky" s={30} /><span className="rail-l">MCP</span></button>
       </aside>
     )
   }
   return (
     <aside className="side">
       <div className="s-head">
-        <button className="side-btn" onClick={onToggleMini} aria-label="折叠侧栏" title="折叠成图标栏"><Icon n="side" s={22} w={1.9} /></button>
+        <button className="side-btn" onClick={onToggleMini} aria-label="折叠侧栏" title="折叠成图标栏"><Icon n="sidebar" s={22} w={1.9} /></button>
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
-      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
+      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新对话</button>
       {item('chars', 'mask', '角色', 'rose')}
       {item('phone', 'phone', '手机连接', 'sky')}
       {item('flows', 'bolt', 'Flow', 'gold')}
@@ -225,7 +231,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
       <button className={`s-me ${view === 'me' || view === 'wallet' || view === 'settings' || view === 'fav' ? 'on' : ''}`} onClick={() => go('me')}>
         <span className="avatar sm"><Icon n="user" s={20} w={1.8} c="#fff" /></span>
         <div className="grow"><div className="b">{USER_FULL}</div><div className="t12">{plan || 'Free'}</div></div>
-        {!plan && <span className="up-tag">升级</span>}
+        {!plan && <span className="up-tag" role="link" onClick={e => { e.stopPropagation(); onUpgrade() }}>升级</span>}
       </button>
     </aside>
   )
@@ -233,6 +239,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
 
 /* ---------------- 我的 */
 function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu: GatewayUsage | null; settings: Settings; favCount: number; go: (v: View) => void }) {
+  const ext = <span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span>
   const u = usageOf(gu)
   const ok = !!(settings.baseUrl && settings.apiKey)
   return (
@@ -247,12 +254,17 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
           {u.limit > 0 && <div className="meter"><div style={{ width: `${u.pct}%` }} /></div>}
           <div className="t12">{u.limit > 0 ? `${u.win}已用 ${u.pct.toFixed(0)}%` : '升级后可用 Helium · Neon · Argon'}{u.exp ? ` · ${u.exp.getMonth() + 1}月${u.exp.getDate()}日到期` : ''}</div>
         </div>
-        <button className="acct-btn" onClick={() => go('wallet')}>{plan ? '管理' : '升级'}</button>
+        <button className="acct-btn" onClick={() => openLink(purchasePage(settings))}>{plan ? '续费' : '升级'}</button>
       </div>
       <div className="list" style={{ marginTop: 18 }}>
-        <button className="row press-row" onClick={() => go('wallet')}><GlassIcon n="crown" tone="gold" s={32} /><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => openLink(purchasePage(settings))}><GlassIcon n="crown" tone="gold" s={32} /><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span>{ext}</button>
+        <button className="row press-row" onClick={() => go('wallet')}><GlassIcon n="wallet" tone="sage" s={32} /><span className="t16 grow">用量与套餐</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
         <button className="row press-row" onClick={() => go('fav')}><GlassIcon n="star" tone="coral" s={32} /><span className="t16 grow">收藏</span><span className="t13">{favCount || ''}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
         <button className="row press-row" onClick={() => go('settings')}><GlassIcon n="gear" tone="slate" s={32} /><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+      </div>
+      <div className="list" style={{ marginTop: 14 }}>
+        <button className="row press-row" onClick={() => openLink(keyPage(settings))}><GlassIcon n="key" tone="sky" s={32} /><span className="t16 grow">获取 API Key</span><span className="t13">platform.qigai.tech</span>{ext}</button>
+        <button className="row press-row" onClick={() => openLink(feedbackPage())}><GlassIcon n="chat" tone="plum" s={32} /><span className="t16 grow">提交反馈</span>{ext}</button>
       </div>
     </section>
   )
@@ -618,12 +630,6 @@ function ProjectStore({ p, save }: { p: Project; save: (p: Project) => void }) {
 }
 
 /* ---------------- Flow */
-function AppIcon({ app, pkg, s = 48 }: { app: string; pkg?: string; s?: number }) {
-  const look = useAppLook(app, pkg)
-  if (look.src) return <img className="app-ic" src={look.src} alt="" style={{ width: s, height: s }} />
-  return <span className="app-ic ph" style={{ width: s, height: s, background: tint(look).bg, fontSize: s * 0.42 }}>{app.slice(0, 1)}</span>
-}
-
 function useRecordReturn(go: (v: View) => void, setMsg: (m: string) => void) {
   useEffect(() => {
     const vis = async () => {
@@ -650,12 +656,6 @@ async function startRecord(a: { label: string; pkg: string }, setMsg: (m: string
     localStorage.setItem('lumi.recording', JSON.stringify({ app: a.label, pkg: a.pkg }))
     await Phone.recordStart({ pkg: a.pkg, app: a.label })
   } catch (e) { setMsg((e as Error).message) }
-}
-
-function useFlows() {
-  const [flows, setFlows] = useState<Flow[]>(loadFlows)
-  useEffect(() => { const on = () => setFlows(loadFlows()); window.addEventListener('lumi-flows', on); return () => window.removeEventListener('lumi-flows', on) }, [])
-  return flows
 }
 
 function AppPicker({ onPick, onClose }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void }) {
@@ -702,7 +702,7 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
       {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
-        <div className="fe-stack"><span style={{ background: 'linear-gradient(150deg,#FFE3D3,#FFC9A8)' }} /><span style={{ background: 'linear-gradient(150deg,#DCEEFF,#B7DBFF)' }} /><span style={{ background: 'linear-gradient(150deg,#E7E0FF,#CFC2FF)' }} /></div>
+        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
         <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
       </div> : <div className="fapp-grid">
@@ -717,11 +717,12 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
 function AppCard({ app, flows, onOpen }: { app: string; flows: Flow[]; onOpen: () => void }) {
   const pkg = flows.find(f => f.pkg)?.pkg
   const t = tint(useAppLook(app, pkg))
+  const names = flows.slice(0, 2).map(f => f.name).join(' · ')
   return (
-    <button className="fapp press" style={{ background: t.bg, color: t.fg, boxShadow: `0 14px 30px -14px ${t.glow}` }} onClick={onOpen}>
-      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={46} /></span><span className="fa-n">{flows.length}</span></div>
+    <button className="fapp mesh press" style={{ background: t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink }} onClick={onOpen}>
+      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={44} /></span><span className="fa-n">{flows.length}</span></div>
       <div className="fa-name ell">{app}</div>
-      <div className="fa-chips">{flows.slice(0, 2).map(f => <span key={f.id} className="ell">{f.name}</span>)}{flows.length > 2 && <span>+{flows.length - 2}</span>}</div>
+      <div className="fa-sub ell">{names}{flows.length > 2 ? ` 等 ${flows.length} 个` : ''}</div>
     </button>
   )
 }
@@ -736,142 +737,37 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   const [ask, setAsk] = useState<Flow | null>(null)
   const [running, setRunning] = useState('')
   const [msg, setMsg] = useState('')
+  const [res, setRes] = useState<RunResult | null>(null)
   useRecordReturn(go, setMsg)
   const run = async (f: Flow, vals: Record<string, string> = {}) => {
-    setAsk(null); setRunning(f.id); setMsg('')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `「${f.name}」完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `「${f.name}」卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`) }
+    setAsk(null); setRunning(f.id); setMsg(''); setRes(null)
+    try { const r = await runFlow(f, vals); setRes(r); setMsg(runSummary(r, f.name)) }
     catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
   }
   const total = flows.reduce((n, f) => n + f.runs, 0)
   return (
     <section className="fade">
-      <div className="fhero" style={{ background: t.bg, color: t.fg, boxShadow: `0 18px 40px -18px ${t.glow}` }}>
-        <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={64} /></span>
+      <div className="fhero mesh" style={{ background: t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink }}>
+        <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={60} /></span>
         <div className="fh-name">{app}</div>
         <div className="fh-sub">{flows.length} 个 Flow{total ? ` · 运行过 ${total} 次` : ''}</div>
         <button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, setMsg)}><span className="rec-dot" />录制新 Flow</button>
       </div>
-      {msg && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{msg}</div>}
+      {msg && !res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{msg}</div>}
       <div className="ftile-grid">
-        {flows.map((f, i) => { const c = tint(look, [0, -18, 16, -34, 30][i % 5]); return (
-          <div key={f.id} className={`ftile press ${running === f.id ? 'busy' : ''}`} style={{ background: c.bg, color: c.fg, boxShadow: `0 12px 26px -14px ${c.glow}` }}
-            onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
+        {flows.map((f, i) => { const c = tint(look, [0, -18, 18, -36, 36][i % 5]); return (
+          <div key={f.id} className={`ftile mesh press ${running === f.id ? 'busy' : ''}`} style={{ background: c.bg, ['--glow' as string]: c.glow, ['--ink' as string]: c.ink }}
+            role="button" tabIndex={0} onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
             <div className="ft-top"><span className="ft-glyph"><Icon n={flowGlyph(f)} s={19} w={2} /></span>
               <button className="ft-more" onClick={e => { e.stopPropagation(); go(`flow:${f.id}` as View) }} aria-label="编辑"><Icon n="more" s={18} w={2.4} /></button></div>
             <div className="ft-name">{f.name}</div>
-            <div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
+            <div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
+            <span className="ft-play"><Icon n="play" s={13} w={2.4} /></span>
           </div>) })}
       </div>
       {flows.length > 0 && <div className="t13" style={{ textAlign: 'center', marginTop: 14 }}>点卡片运行，点右上角编辑</div>}
+      {res && <RunPanel r={res} />}
       {ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}
-    </section>
-  )
-}
-
-const kindIcon: Record<string, string> = { tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', if: 'code', while: 'clock', do: 'play', for: 'list', set: 'pen', call: 'bolt', break: 'x', continue: 'right', else: 'down', endif: 'check', endwhile: 'check', dowhile: 'check', endfor: 'check' }
-
-const ADD_STEPS: { label: string; s: FlowStep }[] = [
-  { label: '回车 / 搜索', s: { kind: 'enter' } },
-  { label: '等待文字出现', s: { kind: 'wait', sel: { text: '' } } },
-  { label: '等 1 秒', s: { kind: 'sleep', ms: 1000 } },
-  { label: '返回', s: { kind: 'key', key: 'back' } },
-  { label: '向下滚动', s: { kind: 'scroll', forward: true } },
-  { label: '点击文字', s: { kind: 'tap', sel: { text: '' } } },
-  { label: '输入文字', s: { kind: 'input', text: '' } },
-]
-
-function FlowEdit({ id, settings, done }: { id: string; settings: Settings; done: () => void }) {
-  const [f, setF] = useState<Flow | undefined>(() => loadFlows().find(x => x.id === id))
-  const [open, setOpen] = useState<number | null>(null)
-  const [add, setAdd] = useState(false)
-  const [ai, setAi] = useState(''), [aiBusy, setAiBusy] = useState(false), [draft, setDraft] = useState<Flow | null>(null)
-  const [msg, setMsg] = useState('')
-  const look = useAppLook(f?.app || '', f?.pkg)
-  if (!f) return <div className="empty">这个 Flow 不存在了</div>
-  const put = (n: Flow) => { const x = { ...n, params: paramsIn(n.steps), updated: Date.now() }; setF(x); upsertFlow(x) }
-  const setStep = (i: number, s: FlowStep) => put({ ...f, steps: f.steps.map((x, j) => j === i ? s : x) })
-  const move = (i: number, d: number) => { const a = [...f.steps]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; put({ ...f, steps: a }); setOpen(j) }
-  const optimize = async () => {
-    setAiBusy(true); setDraft(null); setMsg('')
-    let out = ''
-    try {
-      await streamChat({ settings, tier: 'neon', think: false, signal: new AbortController().signal,
-        system: `你是安卓无障碍自动化专家。用户给你一个 Flow（JSON），请优化后只输出一个 JSON 对象 {"name","desc","steps"}，不要别的文字。规则：
-- 删掉重复、无意义、误触的步骤；保留 launch 作为第一步
-- 选择器优先用稳定的 id 和简短文字；坐标 x/y 是 0-1 的屏幕比例，保留作为兜底
-- 会变化的内容（搜索词、地址、商品、联系人）改成 {参数名}，参数名用简短中文
-- 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
-- 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
-- 付款、提交订单、发送、删除这类步骤加 confirm:true
-- 允许用 if/else/while/do-while/for/set/call 等逻辑节点代替重复步骤；循环必须有明确退出条件（cond 或 for 的 from/to），单循环默认最多 20 次
-- 禁止编造不存在的选择器；只用录制/屏幕上真实出现的 id、文字或坐标
-- 每步可以写一个简短中文 note 说明`,
-        messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}` }],
-        onDelta: t => { out = t } })
-      const j = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1))
-      if (!Array.isArray(j.steps) || !j.steps.length) throw new Error('模型没有给出步骤')
-      setDraft({ ...f, name: j.name || f.name, desc: j.desc || f.desc, steps: tidy(j.steps, f.app) })
-    } catch (e) { setMsg('优化失败：' + ((e as Error).message || '')) } finally { setAiBusy(false) }
-  }
-  const test = async () => {
-    const vals: Record<string, string> = {}
-    for (const p of f.params) { const v = prompt(`试运行 · ${p}`); if (v == null) return; vals[p] = v }
-    setMsg('运行中…')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`); if (!r.ok && r.failedAt != null) setOpen(r.failedAt) }
-    catch (e) { setMsg((e as Error).message) }
-  }
-  const S = draft || f
-  return (
-    <section className="fade">
-      <div className="fe-head" style={{ background: tint(look).soft }}>
-        <span className="fh-ring sm"><AppIcon app={f.app} pkg={f.pkg} s={44} /></span>
-        <div className="grow" style={{ minWidth: 0 }}>
-          <input className="fe-app" value={f.app} onChange={e => put({ ...f, app: e.target.value })} placeholder="应用" />
-          <input className="fe-name" value={f.name} onChange={e => put({ ...f, name: e.target.value })} placeholder="名称，比如 搜索" />
-        </div>
-      </div>
-      <input className="inp" style={{ marginTop: 10 }} value={f.desc} onChange={e => put({ ...f, desc: e.target.value })} placeholder="说明（模型靠它判断什么时候用）" />
-      {f.params.length > 0 && <div className="t13" style={{ marginTop: 8 }}>参数：{f.params.map(p => <span key={p} className="phone-chip" style={{ marginRight: 6 }}>{`{${p}}`}</span>)}</div>}
-
-      <div className="dev-card" style={{ marginTop: 14 }}>
-        <div className="dev-top"><GlassIcon n="spark" tone="plum" s={40} /><div className="grow"><div className="t16 b">用 AI 优化</div><div className="t13">清理多余步骤、提取参数、加上等待和弹窗处理</div></div></div>
-        <input className="inp" value={ai} onChange={e => setAi(e.target.value)} placeholder="额外要求（可选），比如 搜索后点第一篇笔记" />
-        <div className="dev-acts"><button className="btn-ink" disabled={aiBusy} onClick={optimize}>{aiBusy ? '优化中…' : '优化'}</button>
-          {draft && <><button className="btn-ink" onClick={() => { put(draft); setDraft(null); setMsg('已采用优化结果') }}>采用（{draft.steps.length} 步）</button><button className="btn-ghost" onClick={() => setDraft(null)}>放弃</button></>}</div>
-        {draft && <div className="t13">预览：{draft.name}{draft.desc ? ' · ' + draft.desc : ''}</div>}
-      </div>
-
-      <div className="sec">{draft ? '优化后的步骤（预览）' : `步骤 · ${f.steps.length}`}</div>
-      <ol className="flow-steps tl">{S.steps.map((s, i) => (
-        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''}`} style={{ ['--tc' as string]: tint(look).solid, ['--ts' as string]: tint(look).soft }}>
-          <span className="tl-node">{s.kind === 'launch' ? <AppIcon app={f.app} pkg={f.pkg} s={30} /> : <Icon n={kindIcon[s.kind] || 'bolt'} s={16} w={2} />}</span>
-          <div className="tl-card">
-          <button className="fs-head" onClick={() => !draft && setOpen(open === i ? null : i)}>
-            <span className="fs-n">{i + 1}</span><span className="grow ell">{stepLabel(s)}</span>
-            {s.optional && <span className="fs-tag">可选</span>}{s.confirm && <span className="fs-tag warn">确认</span>}
-          </button>
-          {open === i && !draft && <div className="fs-body">
-            {(s.kind === 'input') && <input className="inp" value={s.text || ''} onChange={e => setStep(i, { ...s, text: e.target.value })} placeholder="输入的文字，可用 {参数}" />}
-            {(s.kind === 'tap' || s.kind === 'wait') && <input className="inp" value={s.sel?.text || ''} onChange={e => setStep(i, { ...s, sel: { ...s.sel, text: e.target.value } })} placeholder="按文字找按钮" />}
-            {s.kind === 'sleep' && <input className="inp" inputMode="numeric" value={s.ms || 1000} onChange={e => setStep(i, { ...s, ms: Number(e.target.value) || 1000 })} placeholder="毫秒" />}
-            <input className="inp" value={s.note || ''} onChange={e => setStep(i, { ...s, note: e.target.value || undefined })} placeholder="备注（显示在悬浮条上）" />
-            {s.sel?.id && <div className="t12 ell">控件 id：{s.sel.id}</div>}
-            <div className="dev-acts">
-              <button className={`chip-t ${s.optional ? 'on' : ''}`} onClick={() => setStep(i, { ...s, optional: !s.optional })}>可选</button>
-              <button className={`chip-t ${s.confirm ? 'on' : ''}`} onClick={() => setStep(i, { ...s, confirm: !s.confirm })}>执行前确认</button>
-              <button className="chip-t" onClick={() => move(i, -1)}>上移</button><button className="chip-t" onClick={() => move(i, 1)}>下移</button>
-              <button className="chip-t danger" onClick={() => { put({ ...f, steps: f.steps.filter((_, j) => j !== i) }); setOpen(null) }}>删除</button>
-            </div></div>}
-          </div>
-        </li>))}</ol>
-      {!draft && <>
-        {add ? <div className="dev-acts">{ADD_STEPS.map(a => <button key={a.label} className="chip-t" onClick={() => { put({ ...f, steps: [...f.steps, { ...a.s, sel: a.s.sel ? { ...a.s.sel } : undefined }] }); setAdd(false); setOpen(f.steps.length) }}>{a.label}</button>)}</div>
-          : <button className="add-btn press" onClick={() => setAdd(true)}><Icon n="plus" s={18} w={2} />添加步骤</button>}
-        <div className="dev-acts" style={{ marginTop: 14 }}>
-          <button className="btn-ink" onClick={test}><Icon n="play" s={14} w={2.4} />试运行</button>
-          <button className="btn-ghost danger" onClick={() => { if (confirm(`删除 Flow「${f.name}」？`)) { saveFlows(loadFlows().filter(x => x.id !== f.id)); done() } }}>删除 Flow</button>
-        </div></>}
-      {msg && <div className="imp-msg ok" style={{ marginTop: 12 }}>{msg}</div>}
     </section>
   )
 }
@@ -1350,9 +1246,9 @@ function usageOf(gu: GatewayUsage | null) {
 }
 const fmtTok = (n: number) => n >= 1e4 ? `${+(n / 1e4).toFixed(n >= 1e6 ? 0 : 1)} 万` : n.toLocaleString()
 
-function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, onPlans }: {
+function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, onPlans, onUpgrade }: {
   show: boolean; onClose: () => void; tier: Tier; setTier: (t: Tier) => void; think: boolean; setThink: (b: boolean) => void
-  plan: string | null; gu: GatewayUsage | null; onPlans: () => void
+  plan: string | null; gu: GatewayUsage | null; onPlans: () => void; onUpgrade: () => void
 }) {
   const [seg, setSeg] = useState<0 | 1>(0)
   const [pick, setPick] = useState<Tier>(tier)
@@ -1368,7 +1264,7 @@ function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, on
         <div className="acct">
           <div><div className="t12">当前套餐</div><div className="acct-n serif">{plan || 'Free'}</div>
             <div className="t12">{u.limit ? `${u.win}已用 ${u.pct.toFixed(0)}%` : gu ? '还没有订阅' : '未连接网关'}{u.tokens ? ` · 近 14 天 ${fmtTok(u.tokens)} tokens` : ''}</div></div>
-          <button className="acct-btn" onClick={onPlans}>{plan ? '套餐' : '订阅'}</button>
+          <button className="acct-btn" onClick={plan ? onPlans : onUpgrade}>{plan ? '套餐' : '订阅'}</button>
         </div>
         <div className="seg2" style={{ ['--i' as string]: seg }}><span className="seg2-thumb" />
           <button className={seg === 0 ? 'on' : ''} onClick={() => setSeg(0)}>对话模型</button>
@@ -1415,7 +1311,7 @@ function Wallet({ settings, gu, onSettings }: { settings: Settings; gu: GatewayU
   const plan = gu?.planName || null
   const u = usageOf(gu)
   const connected = !!(settings.baseUrl && settings.apiKey)
-  const buy = () => { const url = purchasePage(settings); if (url) window.open(url, '_blank'); else onSettings() }
+  const buy = () => { const url = purchasePage(settings); if (url) openLink(url); else onSettings() }
   const ledger = [...days].reverse().filter(d => d.tokens > 0).slice(0, 8)
   const total = days.reduce((a, d) => a + d.tokens, 0)
   return (
@@ -1498,7 +1394,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
       <div className="sec">账号</div>
       <div className="list">{f('baseUrl', '网关', 'link', 'https://你的网关')}{f('apiKey', 'API Key', 'key', 'sk-…', 'password')}</div>
       <div className="key-link">
-        {kp ? <a href={kp} target="_blank" rel="noreferrer">获取密钥<Icon n="up" s={12} w={2.4} /></a> : <span className="t13">填写网关后可直接跳转获取密钥</span>}
+        <a href={kp} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); openLink(kp) }}>获取密钥<Icon n="up" s={12} w={2.4} /></a>
       </div>
       <div className="sec">角色扮演</div>
       <div className="list">{f('rpUser', '我的名字', 'users', '用户（角色卡里的 {{user}}）')}
@@ -1529,6 +1425,12 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
           const v = Date.now(); await putBlob('wallpaper:' + v, await shrinkImage(fl)); onWall(v); e.target.value = ''
         }} />
       </div>
+      <div className="sec">会员与帮助</div>
+      <div className="list">
+        <button className="row press-row" onClick={() => openLink(purchasePage(s))}><span className="ico"><Icon n="crown" s={16} w={2} /></span><span className="t16 grow">升级会员</span><span className="t13">{plan || 'Pro / Max / Ultra'}</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
+        <button className="row press-row" onClick={() => openLink(feedbackPage())}><span className="ico"><Icon n="chat" s={16} w={2} /></span><span className="t16 grow">提交反馈</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
+        <button className="row press-row" onClick={() => openLink(PLATFORM_URL)}><span className="ico"><Icon n="globe" s={16} w={2} /></span><span className="t16 grow">官网</span><span className="t13">platform.qigai.tech</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
+      </div>
       <button className="adv-toggle" onClick={() => setAdv(v => !v)}>高级设置<Icon n="down" s={14} w={2.2} /></button>
       {adv && <>
         <div className="sec">图片与视频生成</div>
@@ -1537,7 +1439,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.16 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.17 · 开源 MIT</div>
     </section>
   )
 }

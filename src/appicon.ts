@@ -63,28 +63,28 @@ export function useAppLook(app: string, pkg?: string) {
   return l || { hue: nameHue(app), sat: 0.55, light: 0.5 }
 }
 
-/** 卡片配色（v0.16）：curated 浅色双色方案。背景浅（亮度 88–94%）、文字深色墨 #23272F、阴影淡。
- * 按色相分 8 桶，每桶一对柔和双色；返回结构不变，fg 为深色，solid 取双色中较深的一个（时间线节点用），soft 取最浅色。 */
-const PASTEL: [string, string][] = [
-  ['#FFE3D3', '#FFC9A8'], // 蜜桃
-  ['#DCEEFF', '#B7DBFF'], // 天空
-  ['#D9F2E3', '#B2E5C8'], // 薄荷
-  ['#E7E0FF', '#CFC2FF'], // 薰衣草
-  ['#FFE0E8', '#FFC2D4'], // 蔷薇
-  ['#FFF3CF', '#FFE9A3'], // 奶油黄
-  ['#DFE8F5', '#C3D4EE'], // 雾蓝
-  ['#E4F0D3', '#CBE3B0'], // 豆绿
-]
+/** 卡片配色（v0.17）：iOS 快捷指令式的饱和渐变卡，白字。
+ * 每个色族三色：deep（文字所在的左下区域，白字对比度 ≥5.8:1，WCAG AA）、mid（主色）、hi（右上角高光，不放文字）。
+ * 背景是 CSS 写的 mesh gradient（几层 radial-gradient 叠在线性渐变上）+ 底部淡黑纱 + SVG 颗粒（见 index.css .mesh），
+ * 全部是本仓库自己写的，CC0，不依赖外部图片。低饱和图标（黑白灰）用石墨色。
+ * 返回结构与 v0.16 兼容：fg 文字色、bg 背景、glow 阴影、solid 主色（时间线节点）、soft 浅底（时间线连线 / 浅色头卡）。 */
+export const FAMILIES = [
+  { name: 'coral', deep: '#B8361F', mid: '#E85A3C', hi: '#FFB08A', soft: '#FFE7DE' },
+  { name: 'amber', deep: '#A84A0B', mid: '#E07A1C', hi: '#FFD08A', soft: '#FFEEDB' },
+  { name: 'green', deep: '#0C6E4C', mid: '#1E9A66', hi: '#93E3B8', soft: '#DDF4E8' },
+  { name: 'teal', deep: '#0A6372', mid: '#138E9E', hi: '#86DCE2', soft: '#DAF2F4' },
+  { name: 'blue', deep: '#1C47B0', mid: '#3471E6', hi: '#A3C6FF', soft: '#E1ECFF' },
+  { name: 'indigo', deep: '#33289C', mid: '#5848D8', hi: '#B8ADFF', soft: '#E9E6FF' },
+  { name: 'violet', deep: '#6E2491', mid: '#9A42C6', hi: '#E6ADFF', soft: '#F3E3FB' },
+  { name: 'rose', deep: '#A41F52', mid: '#D63F78', hi: '#FFAACA', soft: '#FFE3EE' },
+] as const
+const GRAPHITE = { name: 'graphite', deep: '#273042', mid: '#465372', hi: '#A6B2C8', soft: '#E6EAF1' }
+const familyOf = (hue: number) => hue < 18 || hue >= 345 ? 0 : hue < 48 ? 1 : hue < 72 ? 1 : hue < 165 ? 2 : hue < 196 ? 3 : hue < 236 ? 4 : hue < 266 ? 5 : hue < 300 ? 6 : 7
+export const meshBg = (f: { deep: string; mid: string; hi: string }) =>
+  `radial-gradient(85% 70% at 100% 0%, ${f.hi}cc 0%, ${f.hi}00 62%), radial-gradient(70% 55% at 12% 6%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(110% 90% at 0% 100%, ${f.deep} 0%, ${f.deep}00 72%), linear-gradient(160deg, ${f.mid} 0%, ${f.deep} 100%)`
 export function tint(l: AppLook, shift = 0) {
-  const h = (l.hue + shift + 360) % 360
-  const bucket = Math.floor(h / 45) % 8
-  const [soft, solid] = PASTEL[bucket]
-  return {
-    fg: '#23272F',
-    bg: `linear-gradient(150deg, ${soft} 0%, ${solid} 100%)`,
-    glow: 'rgba(35,39,47,.14)',
-    solid,
-    soft,
-    ink: '#23272F',
-  }
+  const base = l.sat < 0.18 ? -1 : familyOf((l.hue + 360) % 360)
+  const step = Math.round(shift / 18)
+  const f = base < 0 ? (step ? FAMILIES[(4 + step + 80) % 8] : GRAPHITE) : FAMILIES[(base + step + 80) % 8]
+  return { fg: '#FFFFFF', bg: meshBg(f), glow: f.deep + '66', solid: f.mid, soft: f.soft, ink: f.deep, family: f.name }
 }
