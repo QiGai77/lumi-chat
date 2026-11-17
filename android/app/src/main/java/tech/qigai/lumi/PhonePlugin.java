@@ -147,6 +147,31 @@ public class PhonePlugin extends Plugin {
         }
         JSObject o = new JSObject(); o.put("apps", arr); call.resolve(o);
     }
+    @PluginMethod public void appIcon(PluginCall call) {
+        String pkg = call.getString("pkg", ""), name = call.getString("name", "");
+        PackageManager pm = ctx().getPackageManager();
+        try {
+            if (pkg.isEmpty() || pm.getLaunchIntentForPackage(pkg) == null) {
+                pkg = "";
+                for (ResolveInfo r : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
+                    String label = String.valueOf(r.loadLabel(pm));
+                    if (!name.isEmpty() && (label.equalsIgnoreCase(name) || label.contains(name))) { pkg = r.activityInfo.packageName; if (label.equalsIgnoreCase(name)) break; }
+                }
+            }
+            if (pkg.isEmpty()) { call.reject("没找到应用"); return; }
+            android.graphics.drawable.Drawable d = pm.getApplicationIcon(pkg);
+            int sz = 144;
+            android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(sz, sz, android.graphics.Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas c = new android.graphics.Canvas(bm);
+            d.setBounds(0, 0, sz, sz); d.draw(c);
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo);
+            JSObject o = new JSObject();
+            o.put("pkg", pkg); o.put("label", String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0))));
+            o.put("src", "data:image/png;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP));
+            call.resolve(o);
+        } catch (Exception e) { call.reject("读不到图标：" + e.getMessage()); }
+    }
     @PluginMethod public void launch(PluginCall call) {
         String name = call.getString("name", "").trim();
         PackageManager pm = ctx().getPackageManager();
