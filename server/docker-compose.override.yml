@@ -1,0 +1,7 @@
+# 栖语 Lumi 的补充配置（docker compose 会自动合并本文件）
+services:
+  sub2api:
+    environment:
+      # App（Capacitor WebView）与本地调试的来源，空格分隔
+      - CORS_ALLOWED_ORIGINS=https://localhost capacitor://localhost http://localhost http://localhost:5173 http://localhost:4173
+      - CORS_ALLOW_CREDENTIALS=false

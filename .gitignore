@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 android/app/src/main/assets/public
+server/.env
+server/data/
+server/postgres_data/
+server/redis_data/
