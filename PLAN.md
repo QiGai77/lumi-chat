@@ -143,3 +143,14 @@ Sub2API 已原生支持需要的能力（已核对 vendor/sub2api 源码与 docs
 - src/rp.tsx RpView：HTML 块（div/details/table/style…、```html）进无脚本沙箱 iframe，按内容自适应高度；自定义标签（<stats> 等）和「键: 值」代码块 → 玻璃状态卡（数组→标签，a/b 与百分比→进度条，??? 变灰）；<think>/<inner>/心声 → 折叠；行内 span/font 白名单净化；台词引号高亮；*动作* 浅色斜体。
 - chara.ts：导入 extensions.regex_scripts，runRegex 按 placement / markdownOnly / promptOnly 在显示与发给模型两侧分别执行（不改存储）。
 - 实测：mock 卡（正则好感度条 + stats + details 公告 + think）与 Isekai RPG 真实对话均正常。
+
+## v0.14 HTML 预览、手机连接、手机存储（2026-11-17）
+用户：支持在应用内渲染预览 html；支持通过无障碍和自建 adb 链接手机；支持通过手机存储来保存项目。
+- HTML 预览：html/svg 代码块「预览」→ 全屏沙箱（允许脚本，不同源），手机/平板/全宽切换、刷新、保存到手机（网页/标题-时间.html）。
+- 原生插件 LumiPhone（android/.../PhonePlugin.java）：
+  - LumiA11yService：读屏（编号元素列表）、点击/长按、输入（SET_TEXT）、滚动、滑动手势、系统键、打开应用。
+  - LumiAdb（libadb-android 3.1.1，Apache-2.0；BouncyCastle 生成证书）：无线调试配对（LumiPair：mDNS 找 _adb-tls-pairing 端口 + 通知栏 RemoteInput 填配对码；也可手动输端口/码），自动连接（autoConnect / 发现的 connect 端口 / 5555），shell。
+  - SAF 文件夹：pickFolder 持久授权，writeText/readText/list/remove。
+- 手机操控模式：对话「+」→ 手机操控，模型获得 phone_* 工具；工具循环最多 30 步，步骤折叠显示；Worker 透传 tools / tool_calls / tool_call_id / reasoning_content。
+- 项目存到手机：项目/<名>/ 下存 项目说明.md、对话/*.md（自动同步）、.lumi/*.json（导入用）；项目页可浏览文件、预览 html；项目列表「从手机存储导入项目」。项目里模型可用 phone_save/read/files 读写项目文件夹。
+- 待真机验证：无障碍读屏、配对通知、ADB shell、SAF 写入。
