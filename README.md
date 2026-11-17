@@ -12,6 +12,7 @@
 - **会员页**：套餐卡、三档订阅卡、14 天用量图、用量记录
 - **v0.10 侧栏**：ChatGPT 式左侧栏（新建对话、技能、MCP、定时任务、项目、最近对话、我的），升级会员在「我的」里。截图见 `design/v10/`
 - **v0.9 新界面**：衬线问候 + 首页直接输入、快捷指令、文件夹式最近对话（长按删除）；顶部胶囊导航「对话 / 收藏 / 智能体 / 会员」，头像进设置；思考链折叠显示秒数；回答可收藏；六个预设智能体；模式面板（套餐卡 + 对话模型 / 深度思考）。
+- **v0.16 Flow 逻辑节点**：if/else、while/do-while/for、break/continue、变量 set、子流程 call；迷你侧栏（折叠后只留新建对话/技能/MCP）；Flow 卡片新浅色配色；官网 platform.qigai.tech（获取密钥 /upgrade /反馈）
 - **本地存储**：对话、Key、用量只存在本机
 
 ## 下载
@@ -20,7 +21,7 @@
 
 ## 配置
 
-打开 App →「设置」填网关地址和 API Key；Key 输入框下方的蓝色「获取密钥」直接跳到网关的 `/keys` 页。
+打开 App →「设置」填网关地址和 API Key；Key 输入框下方的蓝色「获取密钥」直接跳到 platform.qigai.tech/keys，订阅页在 platform.qigai.tech/upgrade。
 网关怎么搭、怎么接入 OpenCode / Claude / Codex / Gemini / DeepSeek 等第三方订阅、怎么打包成 Helium / Neon / Argon、怎么建 Pro / Max / Ultra 套餐，见 [server/SETUP.md](server/SETUP.md)。
 
 ## 开发

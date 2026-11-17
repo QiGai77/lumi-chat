@@ -1,5 +1,15 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.16
+- **Flow 逻辑节点**（`src/flow.ts`、`android/.../LumiFlow.java`）：新增 if/else/endif、while/endwhile、do/dowhile、for/endfor、break/continue、set、call；条件 cond（exists/not_exists/text/var，op ==/!=/>/</>=/<=/contains）；变量（string/number/boolean/point/struct，初始变量 `Flow.vars`）；set 支持 `${变量}` 插值、四则、拼接、point 字面量、struct JSON；for 含端点；call 内联子流程（最多 3 层，防循环调用）；tap 可用 `pointVar` 指 point 变量。旧 Flow JSON 向前兼容。`validateFlow`（块配对、空循环、for 缺字段、call 目标不存在、变量未定义警告；循环嵌套 ≤8、单循环默认 ≤20 次可 `max` 覆盖）、`expandCalls`、`stepLabel` 全覆盖；`runFlow` 先校验再展开，`fast` 传给原生；Java 侧 pc 循环解释器 + 控制栈 + 变量表 + 循环保护（单循环超 max 失败、总步数 ≤500 防死循环），每步耗时记 `stepMs`、结果带总 `ms`。
+- **速度与 AI 视觉（诚实口径）**：快的来源是原生无障碍直跑 + 选择器缓存，不是 AI 视觉——视觉（phone_screen + 模型逐步操作）每步都要一次模型往返，比原生 Flow 慢，只做“首跑发现”（找不到元素时定位，找到后把选择器存回 Flow）。目标口径统一为：**快速模式下缓存选择器的步骤目标 ≤1 秒/步**，launch 与页面加载不计入；UI/文档不写“每次执行 1 秒”或“全流程 1 秒”。快速模式（`Flow.fast`）：步后等待 450→120ms、`waitFind` 轮询 350→80ms、tap 默认 timeout 6000→2500ms、launch 不固定睡 1800ms 改为每 100ms 检查窗口根节点变化（最多 1200ms）、input 后聚焦等待 500→150ms。运行成功消息显示总耗时（如 `完成，5 步 · 2.3 秒`）。
+- **Flow 卡片改色**：`tint()` 改为 curated 浅色双色（蜜桃/天空/薄荷/薰衣草/蔷薇/奶油黄/雾蓝/豆绿，亮度 88–94%），文字深色墨 `#23272F`，阴影淡；`.fapp/.fhero/.ftile` 及子元素按深色文字重调；空状态三色块改为蜜桃/天空/薰衣草浅色。
+- **侧栏迷你态**：`App` 增加 `mini` state（`localStorage 'lumi.sideMini'`），桌面 ≥980px 时侧栏缩为 76px，只留折叠按钮 + 新建对话/技能/MCP 三个图标（`title` 提示文字）；手机端 mini 不生效（仍是关闭抽屉）。`s-head` 最前面的按钮即折叠/展开切换。
+- **官网 platform.qigai.tech**（新 `server/platform/`，Worker `lumi-platform`，未部署）：`/` 首页（Helium/Neon/Argon、Flow、APK 下载链接）、`/keys`（说明 App 内置密钥打开即用、提供复制内置密钥按钮；自建 Sub2API 用户填网关地址跳 `{网关}/keys`）、`/upgrade`（Pro ¥50 / Max ¥100 / Ultra ¥200，订阅按钮跳 `{网关}/purchase`）、`/feedback`（表单拼 GitHub Issue 链接新窗口打开 + 复制文本）、`/health`。**诚实限制**：platform v1 是官网前门，真发 key 与真支付在 Sub2API 网关侧；内置网关目前免费、无在线支付，不许写“已支持在线支付/自动发 key”。
+- **App 侧接线**：`api.ts` 增加 `PLATFORM_URL`，`keyPage` 默认 `platform.qigai.tech/keys`、`purchasePage` 默认 `platform.qigai.tech/upgrade`（自定义值仍优先）；设置页 placeholder 与页脚改为 v0.16；钱包页脚改为“订阅与支付在 platform.qigai.tech 完成”。
+- **版本**：0.16.0。
+- **未做**：Cloudflare 部署 platform Worker（需主 agent 做）、真机验证（Java 解释器与 fast 模式只做了人工复核，未跑 Gradle/真机）、PR。
+
 > 写给任何接手的人或 AI：先读这份，再看 `git log`。每完成一小步就 commit + push。
 > 未完成的提交信息带 `[skip ci]`，可编译、可出包的提交才不带，这样 Actions 只为能用的版本打 APK。
 

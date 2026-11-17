@@ -63,19 +63,28 @@ export function useAppLook(app: string, pkg?: string) {
   return l || { hue: nameHue(app), sat: 0.55, light: 0.5 }
 }
 
-/** 卡片配色：保证白字可读。 */
+/** 卡片配色（v0.16）：curated 浅色双色方案。背景浅（亮度 88–94%）、文字深色墨 #23272F、阴影淡。
+ * 按色相分 8 桶，每桶一对柔和双色；返回结构不变，fg 为深色，solid 取双色中较深的一个（时间线节点用），soft 取最浅色。 */
+const PASTEL: [string, string][] = [
+  ['#FFE3D3', '#FFC9A8'], // 蜜桃
+  ['#DCEEFF', '#B7DBFF'], // 天空
+  ['#D9F2E3', '#B2E5C8'], // 薄荷
+  ['#E7E0FF', '#CFC2FF'], // 薰衣草
+  ['#FFE0E8', '#FFC2D4'], // 蔷薇
+  ['#FFF3CF', '#FFE9A3'], // 奶油黄
+  ['#DFE8F5', '#C3D4EE'], // 雾蓝
+  ['#E4F0D3', '#CBE3B0'], // 豆绿
+]
 export function tint(l: AppLook, shift = 0) {
-  const grey = l.sat < 0.2
   const h = (l.hue + shift + 360) % 360
-  const s = grey ? 14 : Math.round(Math.min(88, Math.max(52, l.sat * 100)))
-  const L = grey ? 26 : Math.round(Math.min(58, Math.max(44, l.light * 100)))
-  const yellow = !grey && h >= 40 && h <= 78
+  const bucket = Math.floor(h / 45) % 8
+  const [soft, solid] = PASTEL[bucket]
   return {
-    fg: yellow ? 'hsl(' + h + ' 60% 14%)' : '#fff',
-    bg: `linear-gradient(150deg, hsl(${h} ${s}% ${L + 9}%) 0%, hsl(${(h + 12) % 360} ${s}% ${L - 5}%) 100%)`,
-    glow: `hsl(${h} ${s}% ${L}% / .38)`,
-    solid: `hsl(${h} ${s}% ${L}%)`,
-    soft: `hsl(${h} ${Math.min(s, 70)}% 95%)`,
-    ink: `hsl(${h} ${s}% ${Math.max(28, L - 16)}%)`,
+    fg: '#23272F',
+    bg: `linear-gradient(150deg, ${soft} 0%, ${solid} 100%)`,
+    glow: 'rgba(35,39,47,.14)',
+    solid,
+    soft,
+    ink: '#23272F',
   }
 }
