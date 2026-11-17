@@ -512,3 +512,10 @@ button.row{width:100%;text-align:left}
   background:linear-gradient(175deg,color-mix(in srgb,var(--f1) 42%,rgba(255,255,255,.38)) 0%,color-mix(in srgb,var(--f2) 72%,transparent) 100%)}
 .f-front::before{z-index:2}
 .f-front>.f-title,.f-front>.f-meta{position:relative;z-index:3}
+/* v0.11.2 实测修复 */
+.composer .glass{background:rgba(255,251,248,.9)!important}
+.md th,.md td{white-space:normal;min-width:72px;vertical-align:top}
+.md td:first-child,.md th:first-child{white-space:nowrap}
+.stopped{color:var(--label2);margin:6px 0 0;display:flex;align-items:center;gap:6px}
+.stopped::before{content:"";width:6px;height:6px;border-radius:2px;background:currentColor;opacity:.6}
+.app{overflow-x:hidden}

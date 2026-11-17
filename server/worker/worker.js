@@ -2,7 +2,7 @@
  * 栖语 Lumi 轻量网关（Cloudflare Worker）。
  * App 只认 helium / neon / argon；这里把三个都转到 DeepSeek 官方 API 的 deepseek-flash（V4.1 Flash），
  * 在服务端注入身份提示词，并把流里的上游模型名换回公开名。
- * 需要的密钥（wrangler secret / API 绑定，不进仓库）：DEEPSEEK_KEY、LUMI_KEY（App 里填的访问密钥）。
+ * 需要的密钥（wrangler secret / API 绑定，不进仓库）：DEEPSEEK_KEY、LUMI_KEY（App 内置的访问密钥）。绑定 RL：ratelimit，每 IP 每分钟 20 次。
  */
 const MODELS = { helium: 'Helium', neon: 'Neon', argon: 'Argon' }
 const UPSTREAM = { helium: 'deepseek-flash', neon: 'deepseek-flash', argon: 'deepseek-flash' }
@@ -32,11 +32,19 @@ export default {
     if (path === '' || path === '/health') return json({ ok: true, models: Object.keys(MODELS) })
 
     const auth = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-    if (!env.LUMI_KEY || auth !== env.LUMI_KEY) return err(401, 'API Key 无效')
+    // LUMI_KEY：私有密钥（自己调试用）；APP_KEY：App 内置的公开客户端密钥（会被拆包看到，靠限流兜底）
+    if (!auth || (auth !== env.LUMI_KEY && auth !== env.APP_KEY)) return err(401, 'API Key 无效')
 
     if (path === '/v1/models') return json({ object: 'list', data: Object.keys(MODELS).map(id => ({ id, object: 'model', owned_by: 'lumi' })) })
     if (path === '/v1/usage') return json({ mode: 'unrestricted' })
     if (path !== '/v1/chat/completions' || req.method !== 'POST') return err(404, '不支持的接口')
+
+    // 访问密钥内置在 App 里，可能被拆包拿到：按 IP 限流兜底（RL 是 Cloudflare 的 ratelimit 绑定，每分钟 20 次）
+    if (env.RL) {
+      const ip = req.headers.get('CF-Connecting-IP') || 'unknown'
+      const { success } = await env.RL.limit({ key: ip })
+      if (!success) return err(429, '请求太频繁了，稍等一分钟再试')
+    }
 
     let body
     try { body = await req.json() } catch { return err(400, '请求体不是 JSON') }

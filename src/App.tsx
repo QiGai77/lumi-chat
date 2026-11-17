@@ -241,6 +241,16 @@ function McpPage({ servers, setServers }: { servers: McpServer[]; setServers: (f
   )
 }
 
+/** 把网络 / 网关错误翻成人话。 */
+function friendly(e: unknown) {
+  const m = (e as Error)?.message || String(e)
+  if (/Failed to fetch|NetworkError|Load failed|network/i.test(m)) return navigator.onLine === false ? '网络断开了，连上网再试一次。' : '连不上服务器，检查一下网络，稍后再试。'
+  if (/请求失败 401/.test(m)) return '访问密钥无效，到「设置」里检查一下 API Key。'
+  if (/请求失败 429/.test(m)) return '请求太频繁了，稍等一分钟再试。'
+  if (/请求失败 5\d\d/.test(m)) return '服务器暂时出了点问题，稍后再试。'
+  return m
+}
+
 /** 从 MCP 地址推断官网：去掉 mcp. / api. 之类的前缀。 */
 function siteOf(u: string) {
   try { const h = new URL(u.includes('://') ? u : 'https://' + u).hostname; return /^\d+\.\d+\.\d+\.\d+$|^localhost$/.test(h) ? h : h.replace(/^(mcp|api|server|gateway)\d*\./, '') } catch { return u }
@@ -577,7 +587,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
       addUsage(0, r.completionTokens + r.promptTokens)
       setLast(m => ({ ...m, ms: r.firstTokenMs, thinkMs: m.reasoning && !m.thinkMs ? performance.now() - t0 : m.thinkMs }))
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') setErr((e as Error).message || String(e))
+      if ((e as Error).name === 'AbortError') setLast(m => ({ ...m, stopped: true }))
+      else setErr(friendly(e))
     } finally { setBusy(false); ctrl.current = null }
   }
   const started = useRef(false)
@@ -609,9 +620,10 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
                   <div>{m.reasoning}</div></details>}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
                   {busy && i === last && !m.media && !m.content && !m.reasoning && <span className="caret" />}</div>
-                {!(busy && i === last) && (m.content || m.media?.status === 'done') && (
+                {m.stopped && !(busy && i === last) && <div className="stopped t13">已停止生成</div>}
+                {!(busy && i === last) && (m.content || m.stopped || m.media?.status === 'done') && (
                   <div className="acts">
-                    {!m.media && <button aria-label="复制" onClick={() => navigator.clipboard?.writeText(m.content)}><Icon n="copy" s={18} w={1.8} /></button>}
+                    {!m.media && m.content && <button aria-label="复制" onClick={() => navigator.clipboard?.writeText(m.content)}><Icon n="copy" s={18} w={1.8} /></button>}
                     {i === last && !m.media && <button aria-label="重新回答" onClick={regen}><Icon n="redo" s={18} w={1.8} /></button>}
                     {!m.media && <button aria-label="收藏" className={m.fav ? 'faved' : ''} onClick={() => toggleFav(i)}><Icon n={m.fav ? 'starf' : 'star'} s={18} w={1.8} /></button>}
                     <span className="meta mono">{m.media ? (m.media.kind === 'video' ? settings.videoModel : settings.imageModel) : m.ms ? `首字 ${(m.ms / 1000).toFixed(1)}s` : ''}</span>

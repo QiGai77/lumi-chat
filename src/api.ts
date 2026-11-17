@@ -26,8 +26,11 @@ export interface Settings {
   videoSeconds: number
   theme: 'peach' | 'wallpaper'
 }
+/** 内置网关的公开客户端密钥：装好就能用，服务端按 IP 限流。 */
+export const APP_KEY = 'lumi-app-7f3c9a2e'
+
 export const defaultSettings: Settings = {
-  baseUrl: 'https://api.qigai.tech', apiKey: '', keyUrl: '', purchaseUrl: '',
+  baseUrl: 'https://api.qigai.tech', apiKey: APP_KEY, keyUrl: '', purchaseUrl: '',
   genUI: true,
   mediaBaseUrl: '', mediaKey: '',
   imageModel: 'gpt-image-1', imageSize: '1024x1024',
@@ -40,6 +43,7 @@ export function loadSettings(): Settings {
     const raw = JSON.parse(localStorage.getItem(SK) || '{}')
     if (!raw.apiKey && (raw.ecoKey || raw.fastKey)) raw.apiKey = raw.ecoKey || raw.fastKey // v0.7 → v0.8
     if (!raw.baseUrl || raw.baseUrl === 'https://api.deepseek.com') delete raw.baseUrl // 空地址用默认网关
+    if (!raw.apiKey) delete raw.apiKey // 空密钥用内置密钥
     const s: Record<string, unknown> = { ...defaultSettings }
     for (const k of Object.keys(defaultSettings)) if (k in raw) s[k] = raw[k]
     return s as unknown as Settings
@@ -51,7 +55,7 @@ export const purchasePage = (s: Settings) => s.purchaseUrl || (gw(s) ? gw(s) + '
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
-export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number }
+export interface Msg { role: 'user' | 'assistant'; content: string; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }
 
 export async function streamChat(opts: {
   settings: Settings; tier: Tier; think: boolean; messages: Msg[]; signal: AbortSignal; system?: string

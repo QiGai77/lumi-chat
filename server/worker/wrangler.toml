@@ -3,3 +3,9 @@ main = "worker.js"
 compatibility_date = "2026-11-01"
 routes = [{ pattern = "api.qigai.tech", custom_domain = true }]
 # 密钥：wrangler secret put DEEPSEEK_KEY；wrangler secret put LUMI_KEY
+
+[[unsafe.bindings]]
+name = "RL"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 20, period = 60 }
