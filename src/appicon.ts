@@ -63,10 +63,10 @@ export function useAppLook(app: string, pkg?: string) {
   return l || { hue: nameHue(app), sat: 0.55, light: 0.5 }
 }
 
-/** 卡片配色（v0.18，参考 Figma Riffs）：浅色实底卡 + 每张卡一个强调色。
- * 背景是近白的单方向渐变，右上角叠一层很淡的同色光晕（soft），文字一律深色墨 #141a26，说明文字灰 #5c6270（白底对比度 ≥5.9:1）；
- * 强调色只用在图标块、数量徽标和阴影光晕上。deep 色在 soft 底上做徽标文字，对比度 ≥4.9:1（scripts/contrast.mjs 算过）。
- * 返回结构与 v0.17 兼容：fg 文字色、bg 背景、glow 阴影色、solid 主色（时间线节点）、soft 浅底、ink 深色、icon 无图标时的占位图标底。 */
+/** 卡片配色（v0.19：回到 v0.17 原版的饱和 mesh 渐变卡 + 白字，用户觉得比 v0.18 的近白卡好看）。
+ * 每个色族三色：deep（文字所在区域，白字对比度 ≥5.8:1）、mid（主色）、hi（高光，不放文字）、soft（浅底，时间线等）。
+ * meshBg：文字在左下（原版方向）；meshTop：文字在上方（钱包叠卡露出的标题条，v0.19 新增），把 deep 放到顶部、高光放到右下。
+ * 背景全部是 CSS 写的（几层 radial-gradient + 线性渐变，叠 .mesh 的黑纱和 SVG 颗粒），本仓库自绘，CC0。 */
 export const FAMILIES = [
   { name: 'coral', deep: '#B8361F', mid: '#E85A3C', hi: '#FFB08A', soft: '#FFE7DE' },
   { name: 'amber', deep: '#A84A0B', mid: '#E07A1C', hi: '#FFD08A', soft: '#FFEEDB' },
@@ -79,19 +79,16 @@ export const FAMILIES = [
 ] as const
 const GRAPHITE = { name: 'graphite', deep: '#273042', mid: '#465372', hi: '#A6B2C8', soft: '#E6EAF1' }
 const familyOf = (hue: number) => hue < 18 || hue >= 345 ? 0 : hue < 48 ? 1 : hue < 72 ? 1 : hue < 165 ? 2 : hue < 196 ? 3 : hue < 236 ? 4 : hue < 266 ? 5 : hue < 300 ? 6 : 7
-/** 卡面：近白单方向渐变 + 右上角同色淡光晕，只用一个色族。 */
-export const cardBg = (f: { soft: string }) =>
-  `radial-gradient(120% 85% at 100% 0%, ${f.soft} 0%, ${f.soft}00 58%), linear-gradient(180deg, #FFFFFF 0%, #FFFBF8 100%)`
-/** 应用占位图标（没装应用、取不到图标时）：同一色族的单方向渐变，白字。 */
-export const iconBg = (f: { deep: string; mid: string }) => `linear-gradient(160deg, ${f.mid} 0%, ${f.deep} 100%)`
-/** 兼容旧调用名：现在等同于 iconBg。 */
-export const meshBg = iconBg
+export const meshBg = (f: { deep: string; mid: string; hi: string }) =>
+  `radial-gradient(85% 70% at 100% 0%, ${f.hi}cc 0%, ${f.hi}00 62%), radial-gradient(70% 55% at 12% 6%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(110% 90% at 0% 100%, ${f.deep} 0%, ${f.deep}00 72%), linear-gradient(160deg, ${f.mid} 0%, ${f.deep} 100%)`
+export const meshTop = (f: { deep: string; mid: string; hi: string }) =>
+  `radial-gradient(80% 90% at 100% 100%, ${f.hi}b3 0%, ${f.hi}00 60%), radial-gradient(70% 60% at 88% 92%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(120% 70% at 0% 0%, ${f.deep} 0%, ${f.deep}00 75%), linear-gradient(175deg, ${f.deep} 0%, ${f.deep} 30%, ${f.mid} 100%)`
 export function tint(l: AppLook, shift = 0) {
   const base = l.sat < 0.18 ? -1 : familyOf((l.hue + 360) % 360)
   const step = Math.round(shift / 18)
   const f = base < 0 ? (step ? FAMILIES[(4 + step + 80) % 8] : GRAPHITE) : FAMILIES[(base + step + 80) % 8]
-  return { fg: '#141A26', bg: cardBg(f), glow: f.mid + '40', solid: f.mid, soft: f.soft, ink: f.deep, icon: iconBg(f), family: f.name }
+  return { fg: '#FFFFFF', bg: meshBg(f), top: meshTop(f), glow: f.deep + '66', solid: f.mid, soft: f.soft, ink: f.deep, icon: meshBg(f), family: f.name }
 }
 
-/** 卡片的 CSS 变量：--acc 主色、--acc-deep 深色（徽标文字、图标描边）、--acc-soft 浅底、--glow 阴影光晕。 */
-export const riffVars = (t: ReturnType<typeof tint>) => ({ background: t.bg, ['--acc' as string]: t.solid, ['--acc-deep' as string]: t.ink, ['--acc-soft' as string]: t.soft, ['--glow' as string]: t.glow })
+/** 卡片的 CSS 变量：背景 + --glow 阴影光晕、--ink 深色（白底上的强调字、播放键底色）、--acc-soft 浅底。top=true 用文字在上的 mesh。 */
+export const meshVars = (t: ReturnType<typeof tint>, top = false) => ({ background: top ? t.top : t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink, ['--acc-soft' as string]: t.soft })

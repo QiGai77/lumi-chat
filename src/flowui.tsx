@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { GlassIcon, Icon } from './icons'
 import { streamChat, type Settings } from './api'
-import { riffVars, tint, useAppLook } from './appicon'
+import { meshVars, tint, useAppLook } from './appicon'
 import { blockDepths, checkFlow, findClass, loadFlows, paramsIn, runFlow, runSummary, saveFlows, stepLabel, tidy, upsertFlow,
   type CondOp, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type TraceItem } from './flow'
 
@@ -319,7 +319,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
   const errs = problems.filter(p => p.startsWith('错误')), warns = problems.filter(p => p.startsWith('警告'))
   return (
     <section className="fade">
-      <div className="fe-head riff" style={riffVars(t)}>
+      <div className="fe-head mesh" style={meshVars(t)}>
         <span className="fh-ring sm"><AppIcon app={f.app} pkg={f.pkg} s={44} /></span>
         <div className="grow" style={{ minWidth: 0 }}>
           <input className="fe-app" value={f.app} onChange={e => put({ ...f, app: e.target.value })} placeholder="应用" />

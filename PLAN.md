@@ -1,5 +1,19 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.19（2026-11-18，分支 v017-flow，本地提交、未 push）
+用户反馈（07:55）：「v0.18 的卡片布局还不如原版」——近白卡 + 两列平铺不好看；要 Figma Community Riffs 那样的卡片**排布**，图标要回到原版。
+
+- **图标恢复原版**：`GlassIcon` 回到 v0.11 的两层玻璃图标（后面彩色底块旋转 -14°，前面磨砂玻璃片 + 白色线条图标），删掉 v0.18 在 index.css 里对 `.gi` 的覆盖；侧栏、图标栏（新对话 / 技能 / MCP）、我的、设置、AI 优化卡、各空状态都跟着恢复。应用图标占位回到 v0.17：mesh 渐变底 + 白色衬线首字，外面白框（`.fa-ring`）。
+- **卡面恢复原版配色**：`appicon.ts` 的 `tint()` 回到 v0.17 的饱和 mesh 渐变（`meshBg`，白字在左下 deep 区）+ 新增 `meshTop`（deep 在顶部，给叠卡标题条和便当 hero 用）；`meshVars(t, top)` 写背景和 `--glow / --ink / --acc-soft`。加 Riffs 式层次：顶部 1px 发丝高光、1px 白描边、两层柔和扩散阴影，圆角 26–30px。`.riff`、`cardBg`、`riffVars` 已删。编辑页头卡、空状态三色块也回到 mesh。
+- **Flow 总览 = 便当格**（参考 Riff「Bento UI Components」，`src/bento.ts`）：底层网格手机 4 列（一行两个正方形）、≥720px 8 列（一行四个），行高 = 列宽（`container-type:inline-size` + `cqi`），间距 12 / 14px。应用按 Flow 数排序（同数按出现顺序），第 1 名是 hero（2×2 个正方形：顶部深色条放图标 + 衬线名，下面奶白面板列出最多 3 个 Flow，每行有播放键直接运行），之后按 wide（2×1，右侧两个白色胶囊直接运行）、tall（1×2，大号淡水印字 + 胶囊）、sq、sq 循环。摆放用天际线算法（以正方形为单位放到最低最左的位置，宽度不够就降级 hero→wide→sq、wide→sq；tall 后面不足两格就用 sq），手机和桌面各算一次，位置写成 CSS 变量（`--pc/--pr/--pw/--ph`、`--dc/--dr/--dw/--dh`），中间永远不留洞；「新应用」补在最后：只剩一格时是方格，整行空时是半高胶囊卡。单测：1–30 个应用 × 两种宽度无重叠无洞。
+- **应用页 = 钱包叠卡**（参考 Riff「Five glossy cards」+「Card shuffle」）：每个 Flow 一张 meshTop 卡（同应用按序号换邻近色相，和 v0.17 一样），卡片重叠只露 62px 标题条（图标、名称、说明、白色播放键）；最后一张露出卡面（衬线大序号 + 提示）。点标题条抬起展开（弹簧，`grid-template-rows 0fr→1fr` + margin 过渡），奶白面板里列前 6 步、「编辑」「运行」；前面的卡仍压在下面只露标题条，后面的卡让开 12px；再点收起。≤2 个 Flow 时全部直接展开。运行逻辑抽成 `useRunner()`，总览和应用页共用（参数表、运行明细面板）。
+- **侧栏**：保持 v0.18 行为（关上 = 图标栏），图标换回原版玻璃图标。
+- **对比度**：`node scripts/contrast.mjs` 加了 v19 项（白字 vs deep / mid + 底纱、奶白面板上的墨字 / 灰字 / deep 字），全部 ≥4.5:1；mesh 是渐变，所以 `scripts/v19_shots.py` 另做像素实测：把白字设透明后截图，取每个文字框背景 98 分位最亮像素算对比度——390 / 360 / 1280 下便当格最低 4.83（美团 360px），叠卡标题全部 ≥4.6（最低是 34px 大号序号 4.61，大字门槛 3:1）。
+- **版本**：0.19.0（versionCode 20），设置页页脚 v0.19。README 加 v0.19 说明和 5 个排布 Riffs 署名（只看公开预览，没有复制素材）。
+- **截图**：`python3 scripts/v19_shots.py [phone|desktop]` → `design/v19/`：手机 390 / 360 各一套（图标栏、便当格、叠卡收起、叠卡展开一张、≤2 个时的平铺叠卡、编辑器头卡、我的），桌面便当格和叠卡展开；全部无横向溢出、无页面报错。
+- **测试**：`npm run build` 通过；`node scripts/flow-test.mts` 36 项通过（+3 便当格）；`scripts/flowvm-test/run.sh` 30 项通过（JDK 21，/tmp/jdk）；oxlint 0 错误（19 个旧警告，和 v0.18 相同）。
+- **未做**：push、真机验证（Android WebView 上 `cqi`、`grid-template-rows` 动画需要 Chromium 105+/107+，较新的 WebView 都支持，旧 WebView 上行高会退化）。
+
 ## v0.18（2026-11-18，分支 v017-flow，本地提交、未 push）
 用户反馈：Flow 应用卡太丑（饱和多色 mesh 渐变 + 颗粒 + 白字）。参考 Figma Community「Riffs」重做，其他不好看的界面一起改；侧栏行为澄清：折叠态就是侧栏的关闭态。
 

@@ -1,6 +1,7 @@
 // Flow 纯逻辑单测（node 22+ 直接跑 TS：node scripts/flow-test.mts）。
 // 同时把几个「TS 展开后」的步骤写到 scripts/flowvm-test/expanded.json，给 Java 的 FlowVm 跑（scripts/flowvm-test/run.sh），做到 TS → Java 端到端。
 import { writeFileSync } from 'node:fs'
+import { bentoLayout, bentoOrder } from '../src/bento.ts'
 import { applyLearned, evalValue, evalVarCond, expandCalls, fill, paramsIn, stepLabel, validateClasses, validateFlow, type Flow, type FlowStep } from '../src/flowcore.ts'
 
 let pass = 0, fail = 0
@@ -69,6 +70,19 @@ ok('stepLabel 覆盖新节点', stepLabel({ kind: 'new', var: 'c', cls: 'Cart', 
 const fl = mk('w', [{ kind: 'ai', goal: '搜索框' }, { kind: 'ai', goal: '{店}' }, { kind: 'tap', sel: { text: '旧' }, vision: true }])
 const n = applyLearned([fl], [{ fid: 'w', i: 0, sel: { id: 'a:id/search' }, x: 0.5, y: 0.1 }, { fid: 'w', i: 1, sel: { text: '某店' } }, { fid: 'w', i: 2, sel: { text: '新' } }])
 ok('写回 ai/vision 步，跳过带参数的步', n === 2 && fl.steps[0].sel?.id === 'a:id/search' && !fl.steps[1].sel && fl.steps[2].sel?.text === '新', fl.steps)
+
+// v0.19 便当格：任意应用数、手机 2 / 桌面 4 个正方形宽，格子不重叠、不出界、中间不留洞（只允许最后一行右侧空）
+const holes = (n: number, cols: number) => {
+  const L = bentoLayout(n, cols), H = Math.max(...L.map(c => c.r + c.h)), g: number[][] = Array.from({ length: H }, () => new Array(cols).fill(0))
+  for (const c of L) for (let r = c.r; r < c.r + c.h; r++) for (let k = c.c; k < c.c + c.w; k++) { if (k >= cols) return 'out'; g[r][k]++ }
+  if (g.some(row => row.some(v => v > 1))) return 'overlap'
+  for (let r = 0; r < H - 1; r++) if (g[r].some(v => !v)) return 'hole@' + r
+  return L[L.length - 1].size === 'add' ? '' : 'no-add'
+}
+let bad = ''; for (let n = 1; n <= 30; n++) for (const cols of [2, 4]) { const h = holes(n, cols); if (h) bad += ` n=${n}/${cols}:${h}` }
+ok('便当格 1–30 个应用无重叠无洞', !bad, bad)
+ok('便当格第一名是 hero，按 Flow 数排序', bentoLayout(3, 2)[0].size === 'hero' && bentoOrder(['a', 'b', 'c'], x => ({ a: 1, b: 3, c: 3 })[x]!).join('') === 'bca')
+ok('便当格 7 个应用的手机排法固定', bentoLayout(7, 2).map(c => c.size).join() === 'hero,wide,tall,sq,sq,wide,sq,add', bentoLayout(7, 2).map(c => c.size))
 
 // 给 Java 的端到端用例（期望的动作序列与 FlowVmTest.FakeHost 的记录格式一致）
 const cases = [

@@ -9,8 +9,9 @@ import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from 
 import { AGENTS, agentById, type Agent } from './agents'
 import { RpView } from './rp'
 import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
-import { FAMILIES, cardBg, riffVars, tint, useAppLook } from './appicon'
-import { flowSummary, loadFlows, runFlow, runSummary, tidy, upsertFlow, type Flow, type RunResult } from './flow'
+import { FAMILIES, meshBg, meshVars, tint, useAppLook } from './appicon'
+import { bentoLayout, bentoOrder, type BentoCell, type BentoSize } from './bento'
+import { flowSummary, loadFlows, runFlow, runSummary, stepLabel, tidy, upsertFlow, type Flow, type RunResult } from './flow'
 import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
@@ -685,84 +686,142 @@ function ParamSheet({ f, onRun, onClose }: { f: Flow; onRun: (v: Record<string, 
   )
 }
 
+/** 运行 Flow 的共用状态：有参数先弹参数表，跑完显示结果文字和运行明细。总览页的便当格和应用页的叠卡都用它。 */
+function useRunner() {
+  const [ask, setAsk] = useState<Flow | null>(null)
+  const [running, setRunning] = useState('')
+  const [msg, setMsg] = useState('')
+  const [res, setRes] = useState<RunResult | null>(null)
+  const run = async (f: Flow, vals: Record<string, string> = {}) => {
+    setAsk(null); setRunning(f.id); setMsg(''); setRes(null)
+    try { const r = await runFlow(f, vals); setRes(r); setMsg(runSummary(r, f.name)) }
+    catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
+  }
+  const start = (f: Flow) => { if (!running) { if (f.params.length) setAsk(f); else run(f) } }
+  const ui = <>{res && <RunPanel r={res} />}{ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}</>
+  return { running, msg, setMsg, res, start, ui }
+}
+
+const flowMeta = (f: Flow) => `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}${f.lastOk === false ? ' · 上次失败' : ''}`
+
 function FlowsPage({ go }: { go: (v: View) => void }) {
   const flows = useFlows()
   const [pick, setPick] = useState(false)
-  const [msg, setMsg] = useState('')
-  useRecordReturn(go, setMsg)
-  const apps = [...new Set(flows.map(f => f.app))]
+  const R = useRunner()
+  useRecordReturn(go, R.setMsg)
+  const apps = bentoOrder([...new Set(flows.map(f => f.app))], a => flows.filter(f => f.app === a).length)
+  const ph = bentoLayout(apps.length, 2), dk = bentoLayout(apps.length, 4)
   return (
     <section className="fade">
       <div className="f-sum"><span>{apps.length} 个应用 · {flows.length} 个 Flow</span>
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
-      {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
+      {R.msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{R.msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
-        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="riff" style={{ background: cardBg(FAMILIES[k]), color: FAMILIES[k].deep }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={1.9} /></span>)}</div>
+        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
         <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
-      </div> : <div className="fapp-grid">
-        {apps.map(a => <AppCard key={a} app={a} flows={flows.filter(f => f.app === a)} onOpen={() => go(`flowapp:${a}` as View)} />)}
-        <button className="fapp add press" onClick={() => setPick(true)}><span className="fa-plus"><Icon n="plus" s={22} w={2.2} /></span><span>新应用</span></button>
-      </div>}
-      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, setMsg) }} />}
+      </div> : <div className="bento-wrap"><div className="bento">
+        {apps.map((a, i) => <BentoTile key={a} app={a} ph={ph[i]} dk={dk[i]} flows={flows.filter(f => f.app === a)} running={R.running} onRun={R.start} onOpen={() => go(`flowapp:${a}` as View)} />)}
+        <button className={`bt add ${ph[apps.length].w > 1 ? 'ph-row' : ''} ${dk[apps.length].w > 1 ? 'dk-row' : ''} press`} style={cellVars(ph[apps.length], dk[apps.length])} onClick={() => setPick(true)}><span className="fa-plus"><Icon n="plus" s={22} w={2.2} /></span><span>新应用</span></button>
+      </div></div>}
+      {R.ui}
+      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, R.setMsg) }} />}
     </section>
   )
 }
 
-function AppCard({ app, flows, onOpen }: { app: string; flows: Flow[]; onOpen: () => void }) {
+/** 便当格里的一格。hero：上方深色条放图标和名字，下面一块奶白面板列出 Flow + 播放键；wide / tall：右侧或中间是可直接运行的 Flow 胶囊；sq：原版小卡。 */
+/** 格子位置写成 CSS 变量：--pc/--pr/--pw/--ph 是手机（单位正方形），--dc/--dr/--dw/--dh 是桌面；CSS 换算成底层网格的列和行。 */
+const cellVars = (p: BentoCell, d: BentoCell) => ({ ['--pc' as string]: p.c, ['--pr' as string]: p.r, ['--pw' as string]: p.w, ['--ph' as string]: p.h,
+  ['--dc' as string]: d.c, ['--dr' as string]: d.r, ['--dw' as string]: d.w, ['--dh' as string]: d.h })
+
+function BentoTile({ app, ph, dk, flows, running, onRun, onOpen }: { app: string; ph: BentoCell; dk: BentoCell; flows: Flow[]; running: string; onRun: (f: Flow) => void; onOpen: () => void }) {
   const pkg = flows.find(f => f.pkg)?.pkg
   const t = tint(useAppLook(app, pkg))
-  const names = flows.slice(0, 2).map(f => f.name).join(' · ')
+  const total = flows.reduce((n, f) => n + f.runs, 0)
+  // 内容按手机格子的尺寸排；桌面格子尺寸不同时（被降级），用 data-dk 让 CSS 调整
+  const size: BentoSize = ph.size
+  const pos = { ...cellVars(ph, dk) }
+  const play = (f: Flow) => (e: React.MouseEvent) => { e.stopPropagation(); onRun(f) }
+  const open = (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }
+  if (size === 'hero') {
+    const shown = flows.slice(0, 3)
+    return (
+      <div className="bt hero mesh press-soft" data-dk={dk.size} style={{ ...meshVars(t, true), ...pos }} role="button" tabIndex={0} onClick={onOpen} onKeyDown={open} aria-label={app}>
+        <div className="bh-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={46} /></span>
+          <div className="grow"><div className="bh-name ell">{app}</div><div className="bh-sub ell">{flows.length} 个 Flow{total ? ` · 运行 ${total} 次` : ''}</div></div>
+          <span className="bh-go" aria-hidden="true"><Icon n="right" s={16} w={2.4} /></span></div>
+        <div className="bh-list">
+          {shown.map(f => <div key={f.id} className={`bh-row ${running === f.id ? 'busy' : ''}`}>
+            <span className="bh-gl"><Icon n={flowGlyph(f)} s={16} w={2} /></span>
+            <div className="grow"><div className="bh-fn ell">{f.name}</div><div className="bh-fm ell">{running === f.id ? '运行中…' : flowMeta(f)}</div></div>
+            <button className="bh-play press" onClick={play(f)} aria-label={`运行 ${f.name}`}><Icon n="play" s={12} w={2.6} /></button></div>)}
+          {flows.length > shown.length && <div className="bh-more">还有 {flows.length - shown.length} 个 · 点开查看</div>}
+        </div>
+      </div>)
+  }
+  const pills = size === 'wide' ? flows.slice(0, 2) : size === 'tall' ? flows.slice(0, 3) : []
   return (
-    <button className="fapp riff press" style={riffVars(t)} onClick={onOpen}>
-      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={44} /></span><span className="fa-n">{flows.length}</span></div>
-      <div className="fa-name ell">{app}</div>
-      <div className="fa-sub ell">{names}{flows.length > 2 ? ` 等 ${flows.length} 个` : ''}</div>
-    </button>
-  )
+    <div className={`bt ${size} mesh press`} data-dk={dk.size} style={{ ...meshVars(t), ...pos }} role="button" tabIndex={0} onClick={onOpen} onKeyDown={open} aria-label={app}>
+      {size === 'tall' && <span className="bt-mark" aria-hidden="true">{app.slice(0, 1)}</span>}
+      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={size === 'sq' ? 40 : 44} /></span>{size !== 'wide' && <span className="fa-n">{flows.length}</span>}</div>
+      {pills.length > 0 && <div className="bt-pills">{pills.map(f =>
+        <button key={f.id} className={`bt-pill press ${running === f.id ? 'busy' : ''}`} onClick={play(f)} aria-label={`运行 ${f.name}`}>
+          <span className="ell">{running === f.id ? '运行中…' : f.name}</span><Icon n="play" s={10} w={2.8} /></button>)}</div>}
+      <div className="bt-text"><div className="fa-name ell">{app}</div>
+        <div className="fa-sub ell">{size === 'sq' ? flows.map(f => f.name).join(' · ') : size === 'tall' ? (total ? `运行过 ${total} 次` : '点胶囊直接运行') : `${flows.length} 个 Flow`}</div></div>
+    </div>)
 }
 
 const flowGlyph = (f: Flow) => /搜/.test(f.name) ? 'search' : /外卖|点餐|下单|买/.test(f.name) ? 'wallet' : /发|写|笔记|评论/.test(f.name) ? 'pen' : /消息|聊|回复/.test(f.name) ? 'chat' : /打卡|签到/.test(f.name) ? 'check' : 'bolt'
+const SHIFTS = [0, -18, 18, -36, 36]
 
 function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   const flows = useFlows().filter(f => f.app === app)
   const pkg = flows.find(f => f.pkg)?.pkg
   const look = useAppLook(app, pkg)
   const t = tint(look)
-  const [ask, setAsk] = useState<Flow | null>(null)
-  const [running, setRunning] = useState('')
-  const [msg, setMsg] = useState('')
-  const [res, setRes] = useState<RunResult | null>(null)
-  useRecordReturn(go, setMsg)
-  const run = async (f: Flow, vals: Record<string, string> = {}) => {
-    setAsk(null); setRunning(f.id); setMsg(''); setRes(null)
-    try { const r = await runFlow(f, vals); setRes(r); setMsg(runSummary(r, f.name)) }
-    catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
-  }
+  const R = useRunner()
+  const [sel, setSel] = useState<string | null>(null)
+  useRecordReturn(go, R.setMsg)
   const total = flows.reduce((n, f) => n + f.runs, 0)
+  // 钱包叠卡（参考 Riffs「Five glossy cards, one continuous shuffle」）：卡片重叠，只露出 60px 标题条；点一张抬起展开，显示步骤和运行键。≤2 个时全部展开。
+  const flat = flows.length <= 2
   return (
     <section className="fade">
-      <div className="fhero riff" style={riffVars(t)}>
+      <div className="fhero mesh" style={meshVars(t)}>
         <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={60} /></span>
         <div className="fh-name">{app}</div>
         <div className="fh-sub">{flows.length} 个 Flow{total ? ` · 运行过 ${total} 次` : ''}</div>
-        <button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, setMsg)}><span className="rec-dot" />录制新 Flow</button>
+        <button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, R.setMsg)}><span className="rec-dot" />录制新 Flow</button>
       </div>
-      {msg && !res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{msg}</div>}
-      <div className="ftile-grid">
-        {flows.map(f => { return (
-          <div key={f.id} className={`ftile riff press ${running === f.id ? 'busy' : ''}`} style={riffVars(t)}
-            role="button" tabIndex={0} onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
-            <div className="ft-top"><span className="ft-glyph"><Icon n={flowGlyph(f)} s={19} w={2} /></span>
-              <button className="ft-more" onClick={e => { e.stopPropagation(); go(`flow:${f.id}` as View) }} aria-label="编辑"><Icon n="more" s={18} w={2.4} /></button></div>
-            <div className="ft-name">{f.name}</div>
-            <div className="ft-foot"><div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
-              <span className="ft-play" aria-hidden="true"><Icon n="play" s={12} w={2.6} /></span></div>
-          </div>) })}
+      {R.msg && !R.res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{R.msg}</div>}
+      {flows.length > 0 && <div className="deck-h"><span>全部 Flow</span><span className="t12">{flat ? '点运行键直接跑' : '点卡片展开，点运行键直接跑'}</span></div>}
+      <div className={`deck ${flat ? 'flat' : ''} ${sel && !flat ? 'has-open' : ''}`}>
+        {flows.map((f, i) => {
+          const c = tint(look, SHIFTS[i % 5]); const on = flat || sel === f.id
+          return (
+            <div key={f.id} className={`wcard mesh ${on ? 'open' : ''} ${R.running === f.id ? 'busy' : ''}`} style={{ ...meshVars(c, true), zIndex: i + 1 }}>
+              <div className="wc-head" role="button" tabIndex={0} aria-expanded={on}
+                onClick={() => !flat && setSel(on ? null : f.id)} onKeyDown={e => { if (!flat && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSel(on ? null : f.id) } }}>
+                <span className="ft-glyph"><Icon n={flowGlyph(f)} s={18} w={2} /></span>
+                <div className="grow"><div className="wc-name ell">{f.name}</div><div className="wc-meta ell">{R.running === f.id ? '运行中…' : flowMeta(f)}</div></div>
+                <button className="ft-play press" onClick={e => { e.stopPropagation(); R.start(f) }} aria-label={`运行 ${f.name}`}><Icon n="play" s={13} w={2.6} /></button>
+              </div>
+              <div className="wc-face" aria-hidden={on}>
+                <span className="wc-no">{String(i + 1).padStart(2, '0')}</span>
+                <span className="wc-hint">{f.params.length ? `需要填写：${f.params.join('、')}` : f.desc || `${f.steps.length} 步，点开看步骤`}</span>
+              </div>
+              <div className="wc-body"><div className="wc-in">
+                <ol className="wc-steps">{f.steps.slice(0, 6).map((st, k) => <li key={k}><span>{k + 1}</span><div className="ell">{stepLabel(st)}</div></li>)}</ol>
+                {f.steps.length > 6 && <div className="wc-more">… 共 {f.steps.length} 步</div>}
+                <div className="wc-btns"><button className="btn-ghost press" onClick={() => go(`flow:${f.id}` as View)}><Icon n="pen" s={15} w={2} />编辑</button>
+                  <button className="wc-run press" onClick={() => R.start(f)}><Icon n="play" s={13} w={2.6} />{R.running === f.id ? '运行中…' : '运行'}</button></div>
+              </div></div>
+            </div>)
+        })}
       </div>
-      {flows.length > 0 && <div className="t13" style={{ textAlign: 'center', marginTop: 14 }}>点卡片运行，点右上角编辑</div>}
-      {res && <RunPanel r={res} />}
-      {ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}
+      {R.ui}
     </section>
   )
 }
@@ -1433,7 +1492,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.18 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.19 · 开源 MIT</div>
     </section>
   )
 }
