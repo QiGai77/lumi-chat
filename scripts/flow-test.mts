@@ -157,6 +157,7 @@ const cases = [
   { name: 'call 子流程 + for', steps: expandCalls([{ kind: 'for', var: 'i', from: 1, to: 2 }, { kind: 'call', flowId: 'pay' }, { kind: 'endfor' }], all), expect: ['tap:去支付', 'tap:去支付'] },
   { name: 'do-while 翻页（v0.16 校验会拒绝）', steps: [{ kind: 'do' }, { kind: 'tap', sel: { text: '下一页' } }, { kind: 'dowhile', cond: { kind: 'exists', sel: { text: '下一页' } } }], screen: ['下一页'], pagesLeft: 3, expect: ['tap:下一页', 'tap:下一页', 'tap:下一页'] },
   { name: 'point 字段运算后点击', steps: [{ kind: 'set', var: 'p', value: '0.2,0.4' }, { kind: 'set', var: 'p.x', value: 'p.x * 2' }, { kind: 'tap', pointVar: 'p' }], expect: ['tap@0.4,0.4'] },
+  { name: 'v0.24 AI 接管步：goal 插值，前后步骤照跑', steps: fill([{ kind: 'input', text: '{词}' }, { kind: 'agent', goal: '比较 5 款{词} ${who}', criteria: '{预算}' }, { kind: 'tap', sel: { text: '收藏' } }], { 词: '耳机', 预算: '300' }), vars: { who: '小明' }, expect: ['input:耳机', 'agent:比较 5 款耳机 小明|300', 'tap:收藏'] },
   { name: '初始变量 + 参数填充', steps: fill([{ kind: 'input', text: '{词} ${who}' }], { 词: '露营' }), vars: { who: '小明' }, expect: ['input:露营 小明'] },
 ]
 writeFileSync(new URL('./flowvm-test/expanded.json', import.meta.url), JSON.stringify(cases, null, 1))

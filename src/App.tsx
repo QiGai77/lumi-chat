@@ -13,7 +13,8 @@ import { RpView } from './rp'
 import { Phone, isNative, isPhoneTool, runTool, takeTrace, toolSpecs, toStep } from './phone'
 import { FAMILIES, meshBg, meshVars, tint, useAppLook } from './appicon'
 import { bentoLayout, bentoOrder, type BentoCell, type BentoSize } from './bento'
-import { consumeRecording, startRecording, flowSummary, loadFlows, runFlow, runSummary, stepLabel, type Flow, type RunResult } from './flow'
+import { addTemplate, consumeRecording, startRecording, flowSummary, loadFlows, runFlow, runSummary, stepLabel, takeLastAgent, TEMPLATES, type Flow, type RunResult } from './flow'
+import { AgentCard, AgentLiveLine } from './agentui'
 import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
@@ -729,7 +730,7 @@ function useRunner() {
     catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
   }
   const start = (f: Flow) => { if (!running) { if (f.params.length) setAsk(f); else run(f) } }
-  const ui = <>{res && <RunPanel r={res} />}{ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}</>
+  const ui = <>{running && <AgentLiveLine />}{res && <RunPanel r={res} />}{ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}</>
   return { running, msg, setMsg, res, start, ui }
 }
 
@@ -749,6 +750,8 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
         <button className="gen-btn press" onClick={() => setAsk(true)}><Icon n="eye" s={15} w={2.2} />按任务生成</button>
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
       {R.msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{R.msg}</div>}
+      <div className="tpl-row"><span className="t12">模板</span>{TEMPLATES.map(t => <button key={t.key} className="tpl-chip press" onClick={() => { const f = addTemplate(t.key); if (f) go(`flow:${f.id}` as View) }}>
+        <Icon n="agent" s={14} w={2} /><b>{t.title}</b><span>{t.sub}</span></button>)}</div>
       {flows.length === 0 ? <div className="f-empty">
         <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
@@ -877,7 +880,7 @@ const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替�
 
 /** v0.20：对话里的确认卡 / 结果卡。技能、MCP、Flow 的保存和删除先在这里确认；保存后可撤销；Flow 可试跑（AI 视觉学到的位置自动存回）。 */
 const CARD_STATUS: Record<ChatCard['status'], string> = { pending: '待确认', saved: '已保存', cancelled: '已取消', undone: '已撤销', running: '运行中…', done: '已完成', failed: '没跑完' }
-const CAT_TAG: Record<string, string> = { ai: 'AI 视觉', logic: '逻辑', var: '变量', cls: '类', confirm: '需确认' }
+const CAT_TAG: Record<string, string> = { agent: 'AI 接管', ai: 'AI 视觉', logic: '逻辑', var: '变量', cls: '类', confirm: '需确认' }
 function CardView({ c, live, patch }: { c: ChatCard; live: boolean; patch: (p: Partial<ChatCard>) => void }) {
   const R = useRunner()
   const waiting = c.status === 'pending' && isWaiting(c.id)
@@ -902,7 +905,8 @@ function CardView({ c, live, patch }: { c: ChatCard; live: boolean; patch: (p: P
       {lines.length > 0 && <ol className="cc-steps">{shown.map(([cat, t], k) => <li key={k} className={`cat-${cat}`}><span className="cc-no">{k + 1}</span><span className="grow">{t}</span>{CAT_TAG[cat] && <span className="cc-tag">{CAT_TAG[cat]}</span>}</li>)}
         {lines.length > 8 && <li className="cc-more"><button onClick={() => setMore(!more)}>{more ? '收起' : `展开全部 ${lines.length} 步`}</button></li>}</ol>}
       {c.warn?.length ? <ul className="cc-warn">{c.warn.map(w => <li key={w}>{w}</li>)}</ul> : null}
-      {c.note && <div className={`cc-note ${c.status === 'failed' ? 'bad' : ''}`}>{c.note}</div>}
+      {c.note && <div className={`cc-note ${c.status === 'failed' && !c.agent ? 'bad' : ''}`}>{c.note}</div>}
+      {c.agent && c.agent.cfg.output !== 'none' && <AgentCard o={c.agent} onChange={o => patch({ agent: o })} />}
       {waiting && <div className="cc-btns"><button className="btn-ghost press" onClick={() => decide(c.id, false)}>取消</button>
         <button className={`cc-ok press ${c.op === 'delete' ? 'danger' : ''}`} onClick={() => decide(c.id, true)}><Icon n={c.op === 'delete' ? 'trash' : 'check'} s={15} w={2.4} />{c.op === 'delete' ? '删除' : '保存'}</button></div>}
       {!live && (c.status === 'saved' || ((c.status === 'done' || c.status === 'failed') && flow)) && <div className="cc-btns">
@@ -1157,9 +1161,9 @@ const ASK: Record<'skill' | 'mcp' | 'flow', { btn: string; title: string; hint: 
     ex: ['帮我做个技能：小红书文案助手，标题带数字，正文分段，结尾 5 个话题标签', '帮我做个技能：英文邮件回复，语气礼貌简洁，先给中文要点再给英文全文'], wrap: t => /技能/.test(t) ? t : '帮我做个技能：' + t },
   mcp: { btn: '用对话添加 MCP', title: '添加 MCP 服务器', hint: '贴上 Streamable HTTP 地址（和令牌，如果有）。会先测试连接、读取工具，再弹确认卡。', ph: '比如：加一个 MCP https://mcp.example.com/mcp',
     ex: ['加一个 MCP：https://mcp.deepwiki.com/mcp'], wrap: t => /mcp/i.test(t) ? t : '加一个 MCP：' + t },
-  flow: { btn: '按任务生成', title: '按任务生成 Flow', hint: '用一句话描述手机上要做的事。AI 生成步骤：知道的界面走原生选择器，不认识的界面用 AI 视觉步（第一次要截图问模型，找到后存回，之后走原生）。',
-    ph: '比如：每天帮我在小红书收藏前5篇南京咖啡笔记', ex: ['每天帮我在小红书收藏前5篇南京咖啡笔记', '在美团搜索{店名}，把招牌菜加入购物车，停在结算页', '打开微信，把{内容}发给文件传输助手'],
-    wrap: t => `按任务生成 Flow：${t}\n（不认识的界面用 AI 视觉步，会变的内容做成 {参数}，付款、发送类步骤加确认。）` },
+  flow: { btn: '按任务生成', title: '按任务生成 Flow', hint: '用一句话描述手机上要做的事。AI 生成步骤：固定的导航走原生选择器，不认识的界面用 AI 视觉步；要挑选、比较的部分交给 AI 接管（准确优先，付款前一定停下）。',
+    ph: '比如：每天帮我在小红书收藏前5篇南京咖啡笔记', ex: ['在淘宝搜{关键词}，比较 5 款，按{预算}和口碑挑一款，停在详情页', '每天帮我在小红书收藏前5篇南京咖啡笔记', '在美团搜索{店名}，把招牌菜加入购物车，停在结算页', '打开微信，把{内容}发给文件传输助手'],
+    wrap: t => `按任务生成 Flow：${t}\n（不认识的界面用 AI 视觉步，要挑选、比较的部分用 AI 接管步，会变的内容做成 {参数}，付款、发送类步骤加确认。）` },
 }
 const askChat = (text: string) => window.dispatchEvent(new CustomEvent('lumi-ask', { detail: text }))
 function AskSheet({ kind, prefix = '', onClose }: { kind: keyof typeof ASK; prefix?: string; onClose: () => void }) {
@@ -1310,8 +1314,13 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, men
       const f = loadFlows().find(x => x.id === args.id || x.name === args.id)
       const card: ChatCard = { id: uid(), kind: 'run', op: 'run', title: '运行 Flow', name: f?.name || String(args.id), sub: f?.app, app: f?.app, pkg: f?.pkg, fields: [], status: 'running', before: null, after: f ? { id: f.id } : null }
       if (f) show(card)
-      const out = await runTool(name, args, folder)
-      if (f) show({ ...card, status: /^Flow\s*「[^」]*」完成/.test(out) ? 'done' : 'failed', note: out.split('\n')[0].replace(/^Flow\s*/, '').replace(/。$/, '') })
+      // v0.24：AI 接管时把每一轮的想法写到运行卡上
+      const onLive = (e: Event) => { const l = (e as CustomEvent).detail as { running: boolean; turn: number; max: number; line: string }; if (f && l.running && l.turn) show({ ...card, note: `AI 接管 ${l.turn}/${l.max}：${l.line}` }) }
+      window.addEventListener('lumi-agent', onLive)
+      let out: string
+      try { out = await runTool(name, args, folder) } finally { window.removeEventListener('lumi-agent', onLive) }
+      const ag = takeLastAgent()
+      if (f) show({ ...card, status: /^Flow\s*「[^」]*」完成/.test(out) ? 'done' : 'failed', note: out.split('\n')[0].replace(/^Flow\s*/, '').replace(/。$/, ''), ...(ag.length ? { agent: ag[ag.length - 1] } : {}) })
       return out
     }
     return runTool(name, args, folder)
@@ -1655,7 +1664,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.23 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.24 · 开源 MIT</div>
     </section>
   )
 }

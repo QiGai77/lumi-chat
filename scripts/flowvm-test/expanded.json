@@ -187,6 +187,34 @@
   ]
  },
  {
+  "name": "v0.24 AI 接管步：goal 插值，前后步骤照跑",
+  "steps": [
+   {
+    "kind": "input",
+    "text": "耳机"
+   },
+   {
+    "kind": "agent",
+    "goal": "比较 5 款耳机 ${who}",
+    "criteria": "300"
+   },
+   {
+    "kind": "tap",
+    "sel": {
+     "text": "收藏"
+    }
+   }
+  ],
+  "vars": {
+   "who": "小明"
+  },
+  "expect": [
+   "input:耳机",
+   "agent:比较 5 款耳机 小明|300",
+   "tap:收藏"
+  ]
+ },
+ {
   "name": "初始变量 + 参数填充",
   "steps": [
    {

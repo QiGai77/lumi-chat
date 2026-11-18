@@ -495,6 +495,10 @@ public class LumiFlow {
 
     /** 同步执行（在后台线程调用）。返回 FlowVm 的结果，另加 screen / shot（失败时）、learned（验证过、可写回的选择器与缓存坐标）、visionMs、visionCalls、ocrCalls。 */
     JSONObject run(final String name, JSONArray steps, boolean fastMode, JSONObject initVars, String pkg) {
+        running = true;
+        try { return runInner(name, steps, fastMode, initVars, pkg); } finally { running = false; }
+    }
+    private JSONObject runInner(final String name, JSONArray steps, boolean fastMode, JSONObject initVars, String pkg) {
         stop = false;
         fast = fastMode;
         curPkg = pkg == null ? "" : pkg;
@@ -508,7 +512,7 @@ public class LumiFlow {
         FlowVm.Host h = new FlowVm.Host() {
             @Override public boolean stopped() { return stop; }
             @Override public void progress(int pc, int total, String lb) {
-                showBar(name + " · " + (pc + 1) + "/" + total + " " + lb, null, null, "停止", () -> { stop = true; cancelVision(); });
+                showBar(name + " · " + (pc + 1) + "/" + total + " " + lb, null, null, "停止", () -> { stop = true; cancelVision(); cancelAgent(); });
             }
             @Override public boolean confirm(String lb) {
                 waitUser = new CountDownLatch(1); userOk = false;
@@ -960,6 +964,7 @@ public class LumiFlow {
                 return st.has("x") && !coordAllowed(st) ? "找不到按钮（当前页面和录制时不一样，没有按坐标点）" : "找不到按钮";
             }
             case "ai": return aiStep(st);
+            case "agent": return agentStep(st);
             case "input": {
                 AccessibilityNodeInfo n = hasKey(sel) ? locate(sel, st, timeout) : null;
                 if (n == null) { long t0 = now(); n = focusedInput(); if (n != null) hit("focus"); tLk += now() - t0; }
@@ -999,6 +1004,177 @@ public class LumiFlow {
             case "sleep": sleep(st.optInt("ms", 1000)); return null;
             default: return "不认识的步骤 " + k;
         }
+    }
+
+    /* ---------------- v0.24 AI 接管（agent 步）
+     * 原生运行到 agent 步时把步骤交给 JS（flowAgent 事件），JS 的 agent 循环用 agentObserve / agentAct 一轮一轮地看屏幕、调模型、执行，
+     * 结束后用 flowAgentAnswer 回传 {ok, reason}；ok 时 Flow 接着跑后面的步骤。这里只等结果，不做判断。 */
+    interface AgentSink { void emit(JSONObject req); }
+    static volatile AgentSink agentSink;
+    private volatile CountDownLatch agentWait;
+    private volatile JSONObject agentAns;
+    private volatile String agentId = "";
+    /** Flow 正在运行（agent 步在等 JS）。单独运行的 AI 接管（从对比卡继续）不会改 Flow 的停止标记。 */
+    volatile boolean running = false;
+
+    void cancelAgent() { CountDownLatch l = agentWait; if (l != null) l.countDown(); }
+    void answerAgent(JSONObject a) {
+        if (a == null || !agentId.equals(a.optString("id"))) return;
+        agentAns = a;
+        CountDownLatch l = agentWait; if (l != null) l.countDown();
+    }
+
+    private String agentStep(JSONObject st) {
+        AgentSink sink = agentSink;
+        if (sink == null) return "AI 接管不可用（需要在栖语 App 里运行 Flow）";
+        if (st.optString("goal").trim().isEmpty()) return "AI 接管缺少目标";
+        src = "agent"; hit("agent");
+        long t0 = now();
+        String id = "ag" + System.nanoTime();
+        JSONObject a;
+        try {
+            JSONObject req = new JSONObject();
+            req.put("id", id); req.put("step", st);
+            agentAns = null; agentId = id; agentWait = new CountDownLatch(1);
+            sink.emit(req);
+            long budget = (long) (Math.max(0.5, Math.min(30, st.optDouble("maxMinutes", 5))) * 60000) + 90000;
+            boolean got = agentWait.await(budget, TimeUnit.MILLISECONDS);
+            a = got ? agentAns : null;
+        } catch (Exception e) { a = null; }
+        tAc += now() - t0;
+        if (stop) return "用户停止了";
+        if (a == null) return "AI 接管超时";
+        if (a.optBoolean("ok")) return null;
+        String r = a.optString("reason");
+        return r.isEmpty() ? "AI 接管没有完成" : r;
+    }
+
+    /** 单独运行 AI 接管前清掉上次的停止标记（Flow 正在跑时不动它）。 */
+    void agentBegin() { if (!running) stop = false; }
+
+    /** 一轮观察：等页面安静 → 活动窗口的元素列表（编号和 agentAct 的 id 对应）+ 截图。 */
+    JSONObject agentObserve(int max, boolean shot, long quiet, long maxWait) {
+        JSONObject o = new JSONObject();
+        try {
+            long q0 = now();
+            awaitQuiet(quiet, maxWait);
+            o.put("waitMs", now() - q0);
+            o.put("elements", s.dump(Math.max(20, Math.min(200, max)), null));
+            DisplayMetrics m = s.getResources().getDisplayMetrics();
+            o.put("w", m.widthPixels); o.put("h", m.heightPixels);
+            String pkg = activePkg();
+            o.put("pkg", pkg);
+            String act = actOf.get(pkg); if (act != null) o.put("act", act);
+            if (shot) { String img = shotJpeg(720, 60); if (img != null) o.put("image", img); }
+            o.put("stopped", stop);
+        } catch (Exception ignored) { }
+        return o;
+    }
+
+    /** 点击目标真正会触发的那块：自己或最近的可点祖先；文字取它自己 + 子树（限深）+ 描述，用来做付款 / 发送 / 删除拦截。 */
+    private static String guardText(AccessibilityNodeInfo n) {
+        if (n == null) return "";
+        AccessibilityNodeInfo t = n;
+        for (int d = 0; t != null && d < 5 && !t.isClickable(); d++) t = t.getParent();
+        if (t == null) t = n;
+        StringBuilder sb = new StringBuilder();
+        collect(n, 0, sb);
+        if (t != n) collect(t, 0, sb);
+        return sb.length() > 400 ? sb.substring(0, 400) : sb.toString();
+    }
+    private static void collect(AccessibilityNodeInfo n, int depth, StringBuilder sb) {
+        if (n == null || depth > 3 || sb.length() > 400) return;
+        CharSequence t = n.getText(), d = n.getContentDescription();
+        if (t != null && t.length() > 0) sb.append(t).append(' ');
+        if (d != null && d.length() > 0) sb.append(d).append(' ');
+        for (int i = 0; i < n.getChildCount() && i < 12; i++) collect(n.getChild(i), depth + 1, sb);
+    }
+    /** 屏幕坐标处最深的可见节点（活动窗口里限量遍历）。 */
+    private AccessibilityNodeInfo nodeAt(int x, int y) {
+        AccessibilityNodeInfo root;
+        try { root = s.getRootInActiveWindow(); } catch (Throwable e) { return null; }
+        AccessibilityNodeInfo best = null;
+        java.util.ArrayDeque<AccessibilityNodeInfo> q = new java.util.ArrayDeque<>();
+        if (root != null) q.add(root);
+        int seen = 0;
+        Rect r = new Rect();
+        while (!q.isEmpty() && seen++ < WALK_MAX) {
+            AccessibilityNodeInfo n = q.poll();
+            if (n == null || !n.isVisibleToUser()) continue;
+            n.getBoundsInScreen(r);
+            if (!r.contains(x, y)) continue;
+            best = n;
+            for (int i = 0; i < n.getChildCount(); i++) { AccessibilityNodeInfo c = n.getChild(i); if (c != null) q.add(c); }
+        }
+        return best;
+    }
+
+    /** 执行 agent 的一个动作。guard 是拦截正则：点击目标的文字命中就不点，返回 blocked + 目标文字。 */
+    JSONObject agentAct(JSONObject a) {
+        JSONObject o = new JSONObject();
+        try {
+            String op = a.optString("op");
+            String guard = a.optString("guard");
+            java.util.regex.Pattern g = guard.isEmpty() ? null : java.util.regex.Pattern.compile(guard);
+            DisplayMetrics m = s.getResources().getDisplayMetrics();
+            boolean ok;
+            switch (op) {
+                case "tap": case "long": {
+                    boolean lng = "long".equals(op);
+                    int id = a.optInt("id", -1);
+                    AccessibilityNodeInfo n; int px = 0, py = 0;
+                    if (id >= 0) n = s.node(id);
+                    else { px = (int) (a.optDouble("x") * m.widthPixels); py = (int) (a.optDouble("y") * m.heightPixels); n = nodeAt(px, py); }
+                    if (id >= 0 && n == null) { o.put("ok", false); o.put("err", "没有这个元素编号"); return o; }
+                    String t = guardText(n);
+                    o.put("text", t);
+                    if (g != null && g.matcher(t).find()) { o.put("ok", false); o.put("blocked", true); return o; }
+                    ok = id >= 0 ? s.click(id, lng) : s.tap(px, py, lng ? 700 : 60);
+                    break;
+                }
+                case "input": {
+                    int id = a.optInt("id", -1);
+                    ok = s.input(id, a.optString("text"));
+                    if (!ok) { AccessibilityNodeInfo f = focusedInput(); ok = f != null && setText(f, a.optString("text")); }
+                    break;
+                }
+                case "enter": {
+                    AccessibilityNodeInfo f = focusedInput();
+                    ok = f != null && Build.VERSION.SDK_INT >= 30 && f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                    break;
+                }
+                case "scroll": {
+                    boolean down = !"up".equals(a.optString("dir"));
+                    ok = s.swipe(m.widthPixels / 2, (int) (m.heightPixels * (down ? .72 : .3)), m.widthPixels / 2, (int) (m.heightPixels * (down ? .3 : .72)), 380);
+                    break;
+                }
+                case "swipe": {
+                    String d = a.optString("dir", "left");
+                    int cx = m.widthPixels / 2, cy = m.heightPixels / 2, dx = (int) (m.widthPixels * .32), dy = (int) (m.heightPixels * .25);
+                    int x1 = cx, y1 = cy, x2 = cx, y2 = cy;
+                    if ("left".equals(d)) { x1 = cx + dx; x2 = cx - dx; } else if ("right".equals(d)) { x1 = cx - dx; x2 = cx + dx; }
+                    else if ("up".equals(d)) { y1 = cy + dy; y2 = cy - dy; } else { y1 = cy - dy; y2 = cy + dy; }
+                    ok = s.swipe(x1, y1, x2, y2, 320);
+                    break;
+                }
+                case "back": ok = s.global("back"); break;
+                case "wait": sleep(Math.max(200, Math.min(3000, a.optInt("ms", 1200)))); ok = true; break;
+                default: o.put("ok", false); o.put("err", "不认识的动作 " + op); return o;
+            }
+            o.put("ok", ok);
+            if (!ok) o.put("err", "动作没有成功");
+        } catch (Exception e) { try { o.put("ok", false); o.put("err", String.valueOf(e.getMessage())); } catch (Exception ignored) { } }
+        return o;
+    }
+
+    /** 悬浮条：AI 接管每一轮的想法，带「停止」。 */
+    void agentBar(String text) { showBar(text, null, null, "停止", () -> { stop = true; cancelVision(); cancelAgent(); }); }
+    /** AI 接管结束：back=true 时回到栖语；offer=true 时悬浮条给一个「查看对比」按钮。 */
+    void agentEnd(String text, boolean back, boolean offer) {
+        if (back) { hideBar(0); bringBack(); return; }
+        if (text == null || text.isEmpty()) { hideBar(0); return; }
+        if (offer) { showBar(text, "查看对比", () -> { hideBar(0); bringBack(); }, "关闭", () -> hideBar(0)); hideBar(15000); }
+        else { showBar(text, null, null, null, null); hideBar(2500); }
     }
 
     /* ---------------- 录制 */

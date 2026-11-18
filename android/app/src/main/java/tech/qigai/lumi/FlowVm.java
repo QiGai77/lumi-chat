@@ -622,7 +622,7 @@ public class FlowVm {
     JSONObject resolveStep(JSONObject st) {
         try {
             JSONObject o = new JSONObject(st.toString());
-            for (String k : new String[] { "text", "goal", "note", "app" }) if (o.has(k)) o.put(k, interp(o.optString(k)));
+            for (String k : new String[] { "text", "goal", "note", "app", "criteria" }) if (o.has(k)) o.put(k, interp(o.optString(k)));
             if (o.has("sel")) o.put("sel", interpSel(o.optJSONObject("sel")));
             if (o.has("pointVar")) {
                 String pv = o.optString("pointVar");
@@ -721,6 +721,7 @@ public class FlowVm {
             case "wait": return "等待「" + what + "」出现";
             case "sleep": return "等 " + numStr(st.optInt("ms", 1000) / 1000.0) + " 秒";
             case "ai": return "AI 找「" + st.optString("goal") + "」并" + ("input".equals(st.optString("act")) ? "输入" : "long".equals(st.optString("act")) ? "长按" : "点击");
+            case "agent": return "AI 接管：" + st.optString("goal");
             case "if": return "如果 " + condLabel(st.optJSONObject("cond"));
             case "else": return "否则";
             case "endif": return "条件结束";

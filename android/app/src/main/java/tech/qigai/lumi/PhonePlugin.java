@@ -41,6 +41,8 @@ public class PhonePlugin extends Plugin {
         LumiPair.listener = (state, msg) -> { JSObject o = new JSObject(); o.put("state", state); o.put("msg", msg); notifyListeners("adb", o); };
         // v0.17：Flow 的 AI 视觉步把截图和元素列表交给 JS 调模型，JS 用 flowVisionAnswer 回传
         LumiFlow.visionSink = req -> { try { notifyListeners("flowVision", JSObject.fromJSONObject(req)); } catch (Exception ignored) { } };
+        // v0.24：AI 接管步交给 JS 的 agent 循环，JS 用 flowAgentAnswer 回传
+        LumiFlow.agentSink = req -> { try { notifyListeners("flowAgent", JSObject.fromJSONObject(req)); } catch (Exception ignored) { } };
     }
 
     private Context ctx() { return getContext(); }
@@ -103,7 +105,39 @@ public class PhonePlugin extends Plugin {
         if (s != null && s.flow != null) s.flow.answerVision(call.getData());
         call.resolve();
     }
-    @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) { s.flow.stop = true; s.flow.cancelVision(); } call.resolve(); }
+    @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) { s.flow.stop = true; s.flow.cancelVision(); s.flow.cancelAgent(); } call.resolve(); }
+
+    /* ---------- v0.24 AI 接管 */
+    @PluginMethod public void flowAgentAnswer(PluginCall call) {
+        LumiA11yService s = LumiA11yService.instance;
+        if (s != null && s.flow != null) s.flow.answerAgent(call.getData());
+        call.resolve();
+    }
+    @PluginMethod public void agentBegin(PluginCall call) { LumiA11yService s = svc(call); if (s == null) return; s.flow.agentBegin(); call.resolve(); }
+    @PluginMethod public void agentObserve(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        final int max = call.getInt("max", 150);
+        final boolean shot = Boolean.TRUE.equals(call.getBoolean("shot", true));
+        final long quiet = call.getInt("quiet", 450), maxWait = call.getInt("maxWait", 3000);
+        LumiAdb.IO.execute(() -> {
+            try { call.resolve(JSObject.fromJSONObject(s.flow.agentObserve(max, shot, quiet, maxWait))); }
+            catch (Throwable e) { call.reject("读屏失败：" + e.getMessage()); }
+        });
+    }
+    @PluginMethod public void agentAct(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        final org.json.JSONObject a = call.getData();
+        LumiAdb.IO.execute(() -> {
+            try { call.resolve(JSObject.fromJSONObject(s.flow.agentAct(a))); }
+            catch (Throwable e) { call.reject("动作失败：" + e.getMessage()); }
+        });
+    }
+    @PluginMethod public void agentBar(PluginCall call) { LumiA11yService s = svc(call); if (s == null) return; s.flow.agentBar(call.getString("text", "")); call.resolve(); }
+    @PluginMethod public void agentEnd(PluginCall call) {
+        LumiA11yService s = svc(call); if (s == null) return;
+        s.flow.agentEnd(call.getString("text", ""), Boolean.TRUE.equals(call.getBoolean("back", false)), Boolean.TRUE.equals(call.getBoolean("offer", false)));
+        call.resolve();
+    }
     @PluginMethod public void recordStart(PluginCall call) {
         LumiA11yService s = svc(call); if (s == null) return;
         s.flow.recordStart(call.getString("pkg", ""), call.getString("app", ""), Boolean.TRUE.equals(call.getBoolean("resume", false)));

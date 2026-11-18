@@ -39,6 +39,14 @@ interface LumiPhonePlugin {
   remove(o: { path: string }): Promise<void>
   addListener(ev: 'adb', cb: (d: { state: string; msg: string }) => void): Promise<{ remove: () => void }>
   addListener(ev: 'flowVision', cb: (d: import('./vision').VisionReq) => void): Promise<{ remove: () => void }>
+  // v0.24 AI 接管
+  addListener(ev: 'flowAgent', cb: (d: { id: string; step: FlowStep }) => void): Promise<{ remove: () => void }>
+  flowAgentAnswer(o: { id: string; ok: boolean; reason?: string }): Promise<void>
+  agentBegin(): Promise<void>
+  agentObserve(o: { max?: number; shot?: boolean; quiet?: number; maxWait?: number }): Promise<import('./agent').Obs>
+  agentAct(o: { op: string; id?: number; x?: number; y?: number; text?: string; dir?: string; ms?: number; guard?: string }): Promise<{ ok: boolean; blocked?: boolean; text?: string; err?: string }>
+  agentBar(o: { text: string }): Promise<void>
+  agentEnd(o: { text?: string; back?: boolean; offer?: boolean }): Promise<void>
 }
 
 export const Phone = registerPlugin<LumiPhonePlugin>('LumiPhone')

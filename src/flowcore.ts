@@ -5,14 +5,16 @@
  * v0.17：class（字段 + 方法，方法体是子流程）、new 实例化、obj.field 读写、obj.method() 调用（运行时 this 绑定）、
  *        ai 步（AI 视觉定位，找到的选择器写回 Flow，下次走原生）。旧 Flow JSON 原样可跑。
  * v0.23：步上新增可选字段 fp（录制时的页面指纹，坐标兜底要指纹一致）和 hit（验证过的缓存坐标，快速模式里指纹一致时直接点）；
- *        等待步不能空；运行明细多了每步耗时拆分。旧 Flow 不需要迁移。 */
+ *        等待步不能空；运行明细多了每步耗时拆分。旧 Flow 不需要迁移。
+ * v0.24：agent 步（AI 接管）：前面的确定性步骤照常快跑，到这一步由 AI 一轮一轮看屏幕、操作、比较，完成一个自然语言目标；
+ *        付款、提交订单、发送、删除前一定停下。字段 goal / criteria / maxSteps / maxMinutes / stopBefore / output / model。旧 Flow 不受影响。 */
 
 export interface Sel { id?: string; text?: string; desc?: string; cls?: string }
 /** v0.23 页面指纹：包名 + 最近的 Activity 类名 + 屏幕像素尺寸。 */
 export interface ScreenFp { pkg: string; act?: string; w: number; h: number }
 /** v0.23 缓存坐标：验证通过的点击位置（0-1 比例）+ 当时的页面指纹 + 选择器签名（id|text|desc，选择器改了就作废）。 */
 export interface Hit extends ScreenFp { x: number; y: number; sig: string }
-export type StepKind = 'launch' | 'tap' | 'input' | 'enter' | 'scroll' | 'swipe' | 'key' | 'wait' | 'sleep' | 'ai'
+export type StepKind = 'launch' | 'tap' | 'input' | 'enter' | 'scroll' | 'swipe' | 'key' | 'wait' | 'sleep' | 'ai' | 'agent'
   | 'if' | 'else' | 'endif' | 'while' | 'endwhile' | 'do' | 'dowhile' | 'for' | 'endfor' | 'break' | 'continue' | 'set' | 'call'
   | 'new' | 'method' | 'bind' | 'unbind'
 export type CondOp = '==' | '!=' | '>' | '<' | '>=' | '<=' | 'contains'
@@ -34,6 +36,8 @@ export interface FlowStep {
   cls?: string; method?: string; args?: Record<string, string>; fields?: Record<string, string>
   // v0.23：录制时的页面指纹；验证过的缓存坐标（运行后自动写回）
   fp?: ScreenFp; hit?: Hit
+  // v0.24 AI 接管（kind 'agent'）：goal 目标（可用 {参数}）、criteria 挑选标准、轮数 / 时间上限、在哪类操作前停下、输出形式、用哪个模型
+  criteria?: string; maxSteps?: number; maxMinutes?: number; stopBefore?: StopKind[]; output?: 'compare' | 'text' | 'none'; model?: 'helium' | 'neon' | 'argon'
   // 运行时标注：步骤在哪个 Flow（或类方法）的第几步，用来把 AI 学到的选择器写回去
   _i?: number; _fid?: string
 }
@@ -47,6 +51,10 @@ export interface Flow {
   lastMs?: number
 }
 
+/** v0.24 AI 接管在哪类操作前停下：付款（永远停）、提交订单 / 下单、发送 / 发布、删除。 */
+export type StopKind = 'pay' | 'submit' | 'send' | 'delete'
+export const STOP_KINDS: StopKind[] = ['pay', 'submit', 'send', 'delete']
+export const AGENT_DEFAULTS = { maxSteps: 25, maxMinutes: 5, output: 'compare' as const, model: 'argon' as const }
 export const MAX_LOOP_DEPTH = 8
 export const DEFAULT_LOOP_MAX = 20
 export const MAX_CALL_DEPTH = 3
@@ -181,6 +189,7 @@ export const stepLabel = (s: FlowStep): string => {
     case 'key': return ({ back: '返回', home: '回主屏', recents: '最近任务' } as Record<string, string>)[s.key || ''] || '按键'
     case 'wait': return `等待「${w}」出现`
     case 'sleep': return `等 ${(s.ms || 1000) / 1000} 秒`
+    case 'agent': return `AI 接管：${s.goal || '（还没写目标）'}`
     case 'ai': return `AI 找「${s.goal || ''}」并${s.act === 'input' ? `输入「${s.text || ''}」` : s.act === 'long' ? '长按' : '点击'}`
     case 'if': return `如果 ${condLabel(s.cond)}`
     case 'else': return '否则'
@@ -415,6 +424,14 @@ export function validateFlow(steps: FlowStep[], all?: Flow[], initialVars?: Reco
         if (!s.goal?.trim()) errs.push(`错误：第 ${at} 步 AI 步要写清楚找什么`)
         if (s.act === 'input' && !s.text) warn.push(`警告：第 ${at} 步 AI 输入没有填文字`)
         break
+      case 'agent':
+        if (!s.goal?.trim()) errs.push(`错误：第 ${at} 步 AI 接管要写目标（比如 在搜索结果里比较 5 款，挑最合适的一款）`)
+        if (s.maxSteps != null && (!Number.isInteger(s.maxSteps) || s.maxSteps < 1 || s.maxSteps > 60)) errs.push(`错误：第 ${at} 步 AI 接管的最多轮数要在 1 到 60 之间`)
+        if (s.maxMinutes != null && (!(s.maxMinutes > 0) || s.maxMinutes > 30)) errs.push(`错误：第 ${at} 步 AI 接管的时间上限要在 30 分钟以内`)
+        if (s.stopBefore && s.stopBefore.some(k => !STOP_KINDS.includes(k))) warn.push(`警告：第 ${at} 步 AI 接管有不认识的停止类别，会忽略`)
+        if (s.goal && s.goal.length > 300) warn.push(`警告：第 ${at} 步 AI 接管的目标太长，写成一两句话更准`)
+        for (const m of [s.goal, s.criteria].join(' ').matchAll(new RegExp(`\\$\\{(${PATH})\\}`, 'g'))) checkPath(m[1], at)
+        break
       case 'tap': if (s.pointVar) checkPath(s.pointVar, at); break
       case 'wait':
         // v0.23：空的等待步什么也等不到（运行器每步已经自动等到下一步的目标出现），不允许保存
@@ -506,12 +523,12 @@ export const fill = (steps: FlowStep[], vals: Record<string, string>): FlowStep[
     const r = (t?: string) => t?.replace(PARAM, (m, k) => (k in vals ? vals[k] : m))
     const rm = (o?: Record<string, string>) => o ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, r(v) ?? ''])) : undefined
     const cond = s.cond ? { ...s.cond, text: r(s.cond.text), value: r(s.cond.value), sel: s.cond.sel ? { ...s.cond.sel, text: r(s.cond.sel.text), desc: r(s.cond.sel.desc) } : undefined } : undefined
-    return { ...s, text: r(s.text), note: r(s.note), value: r(s.value), goal: r(s.goal), args: rm(s.args), cond,
+    return { ...s, text: r(s.text), note: r(s.note), value: r(s.value), goal: r(s.goal), ...(s.criteria != null ? { criteria: r(s.criteria) } : {}), args: rm(s.args), cond,
       from: typeof s.from === 'string' ? r(s.from) : s.from, to: typeof s.to === 'string' ? r(s.to) : s.to,
       sel: s.sel ? { ...s.sel, text: r(s.sel.text), desc: r(s.sel.desc) } : undefined }
   })
 export const paramsIn = (steps: FlowStep[]) => [...new Set(steps.flatMap(s =>
-  [s.text, s.value, s.goal, s.sel?.text, s.sel?.desc, s.cond?.text, s.cond?.value, typeof s.from === 'string' ? s.from : '', typeof s.to === 'string' ? s.to : '', ...Object.values(s.args || {})]
+  [s.text, s.value, s.goal, s.criteria, s.sel?.text, s.sel?.desc, s.cond?.text, s.cond?.value, typeof s.from === 'string' ? s.from : '', typeof s.to === 'string' ? s.to : '', ...Object.values(s.args || {})]
     .join(' ').match(PARAM) || []).map(x => x.slice(1, -1)))]
 export const hasParam = (s: FlowStep) => paramsIn([s]).length > 0
 /** v0.20：目标或文字里带 ${变量}（比如循环里的「第 ${i} 篇笔记」）的步每次指向不同元素，学到的选择器也不能写死。 */

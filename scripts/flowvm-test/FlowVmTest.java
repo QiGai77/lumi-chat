@@ -35,6 +35,7 @@ public class FlowVmTest {
             if (st.has("text")) d += ":" + st.optString("text");
             if (st.optBoolean("coordOnly")) d += "@" + st.optDouble("x") + "," + st.optDouble("y");
             if (k.equals("ai")) d += ":" + st.optString("goal");
+            if (k.equals("agent")) d = "agent:" + st.optString("goal") + "|" + st.optString("criteria");
             acts.add(d);
             if (k.equals("tap") && st.has("sel") && st.optJSONObject("sel").optString("text").equals("下一页")) {
                 if (--pagesLeft <= 0) screen.remove("下一页");

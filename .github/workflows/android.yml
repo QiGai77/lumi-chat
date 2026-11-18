@@ -23,6 +23,11 @@ jobs:
           distribution: temurin
           java-version: 21
       - run: npm ci
+      - name: Unit tests (Flow / AI 接管 / FlowVm)
+        run: |
+          node scripts/flow-test.mts
+          node scripts/agent-test.mts
+          bash scripts/flowvm-test/run.sh
       - run: npm run build
       - run: npx cap sync android
       - name: Gradle assemble

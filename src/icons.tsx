@@ -1,4 +1,5 @@
 const P: Record<string, string> = {
+  agent: '<rect x="5.2" y="2.8" width="13.6" height="18.4" rx="3.4"/><path d="M12 6.8c.4 2.3 1.5 3.4 3.8 3.8-2.3.4-3.4 1.5-3.8 3.8-.4-2.3-1.5-3.4-3.8-3.8 2.3-.4 3.4-1.5 3.8-3.8z"/><path d="M10.4 18h3.2"/>',
   layers: '<path stroke-linejoin="round" d="M12 3.5l8.5 4.3-8.5 4.3-8.5-4.3z"/><path stroke-linejoin="round" d="M3.5 12l8.5 4.3 8.5-4.3M3.5 16.2l8.5 4.3 8.5-4.3"/>',
   merge: '<path d="M6 4v4.5c0 2 1.5 3.5 3.5 3.5h5c2 0 3.5 1.5 3.5 3.5V20"/><path d="M18 4v4.5c0 2-1.5 3.5-3.5 3.5"/><path d="M15.5 17.5L18 20l2.5-2.5"/>',
   checks: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.2l2.8 2.8 5.2-5.6"/>',

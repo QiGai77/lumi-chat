@@ -20,6 +20,8 @@ export interface ChatCard {
   before: unknown | null; after: unknown | null
   /** 结果说明（撤销结果、试跑结果、运行结果） */
   note?: string
+  /** v0.24：运行里 AI 接管的结果（对比卡） */
+  agent?: import('./agentcore.ts').AgentOutcome
 }
 
 /* ---------- 存储：Flow 的读写由 flow.ts 注入（它会同步到手机文件夹），默认直接用 localStorage */
@@ -68,6 +70,7 @@ export const CUSTOM_PROMPT = `你可以在对话里替用户定制栖语：
 5. 付款、下单、提交、发送、发布、删除这类步骤加 confirm:true。
 6. Flow 本身不带时间。用户说「每天 / 每周」时，保存后告诉用户可以在「定时任务」里加一条，提示词写：运行 Flow「名称」。
 7. 速度要说实话：原生步和已缓存的步通常几百毫秒一步（页面加载时间另算）；选择器失效时先用手机上的文字识别找字，再不行才让 AI 视觉找，视觉每次要一次模型往返（约 2–3 秒）。建议用户保存后先在卡片上点「试跑」一次，让 AI 把位置学会存回。
+9. 需要看内容做判断的部分（挑一个、比较、筛选：最便宜的、评分最高的、最合适的一款、最新一条未读）用 AI 接管步，不要用一串猜出来的点击：{"kind":"agent","goal":"在搜索结果里比较至少 5 款{关键词}，按 {预算} 和口碑挑最合适的一款，停在商品详情页","criteria":"{预算}"}。固定导航（打开应用 → 点搜索 → 输入 → 回车）仍然用确定性步骤放在前面，跑得快；agent 步后面还可以接普通步骤。AI 接管每轮看屏幕、问一次模型，准确优先、比较慢；会在付款、提交订单、发送、删除前自己停下，结果是一张对比卡（继续去下单 / 换一个 / 结束）。可选字段 maxSteps（默认 25）、maxMinutes（默认 5）、model（默认 argon）。
 8. 用户已有的 Flow 能完成其中一段时（先用 flow_list 看），直接把它当一步调用：{"kind":"call","flowId":"已有 Flow 的 id","args":{"关键词":"{关键词}"}}，args 给子 Flow 的 {参数} 传值。不能调用自己、不能形成循环，最多嵌套 5 层。`
 
 /* ---------- 工具执行：只读的直接返回文字；改动类返回确认卡 */
@@ -98,7 +101,7 @@ export function checkMcpUrl(u: string): { url?: string; error?: string; warn?: s
 }
 
 /** 一步属于哪类（确认卡上的小标签）。 */
-export const stepCat = (s: FlowStep) => s.confirm ? 'confirm' : s.kind === 'ai' || s.vision ? 'ai'
+export const stepCat = (s: FlowStep) => s.confirm ? 'confirm' : s.kind === 'agent' ? 'agent' : s.kind === 'ai' || s.vision ? 'ai'
   : ['if', 'else', 'endif', 'while', 'endwhile', 'do', 'dowhile', 'for', 'endfor', 'break', 'continue', 'call'].includes(s.kind) ? 'logic'
     : s.kind === 'set' ? 'var' : ['new', 'method'].includes(s.kind) ? 'cls' : 'act'
 
@@ -108,9 +111,11 @@ export function flowSpeed(steps: FlowStep[]) {
   const cached = steps.filter(s => (s.kind === 'ai' || s.vision) && s.sel).length
   const act = steps.filter(s => stepCat(s) === 'act' || s.confirm).length
   const dyn = steps.filter(s => (s.kind === 'ai' || s.vision) && !s.sel && /\$\{|(?<!\$)\{[^{}]+\}/.test([s.goal, s.text].join(' '))).length
-  const parts = [`原生 ${act + cached} 步`, ai ? `AI 视觉 ${ai} 步` : '']
+  const agent = steps.filter(s => s.kind === 'agent').length
+  const parts = [`原生 ${act + cached} 步`, ai ? `AI 视觉 ${ai} 步` : '', agent ? `AI 接管 ${agent} 步` : '']
   const note = ai ? `原生和已缓存的步通常几百毫秒一步（页面加载另算）；AI 视觉步没缓存时先试手机上的文字识别，再不行要一次模型往返（几秒），找到的位置自动存回，之后走原生。${dyn ? `其中 ${dyn} 步的目标带参数或变量，不会缓存，每次都走 AI 视觉。` : ''}可以先点「试跑」让它学会。` : '全部是原生步，通常几百毫秒一步（不含打开应用和页面加载）。'
-  return { ai, cached, text: parts.filter(Boolean).join(' · '), note }
+  const agentNote = agent ? '到了 AI 接管步，AI 每轮看一次屏幕、问一次模型（几秒到十几秒一轮），准确优先，结束后给出对比卡；付款、提交订单、发送、删除前一定停下。' : ''
+  return { ai, cached, text: parts.filter(Boolean).join(' · '), note: agentNote ? (agent === steps.length ? agentNote : note + agentNote) : note }
 }
 
 export async function proposeTool(name: string, args: Record<string, unknown>, ctx: ToolCtx = {}): Promise<Proposal> {

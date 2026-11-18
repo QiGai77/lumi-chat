@@ -1354,3 +1354,68 @@ img.app-ic{border-radius:22%;box-shadow:0 0 0 1px rgba(20,26,38,.06)}
 .rp-recent-row .chip-t.bad{color:#B8361F}
 @media (max-width:400px){.rp-list .rp-bar{width:48px}}
 .rp-stats .rp-trio b{font-size:14px;line-height:21px;white-space:nowrap}
+
+/* ---------- v0.24 AI 接管 */
+.flow-steps.tl li.is-agent .tl-node{background:linear-gradient(150deg,#2a3145,#121621);color:#fff;box-shadow:0 6px 14px -8px rgba(18,22,33,.7),inset 0 1px 0 rgba(255,255,255,.16)}
+.flow-steps.tl li.is-agent .tl-card{box-shadow:inset 0 0 0 1px rgba(27,32,48,.16),inset 3px 0 0 #1B2030,0 1px 2px rgba(60,30,15,.03);background:linear-gradient(180deg,#fff,#f7f8fb)}
+.fs-tag.agent{background:#1B2030;color:#fff}
+.ag-goal-in{resize:vertical;min-height:72px;line-height:1.5}
+.cache-note.ag-note{background:#EEF0F6;color:#2a3145}
+.tpl-row{display:flex;align-items:center;gap:8px;overflow-x:auto;scrollbar-width:none;margin:0 0 12px;padding:2px}
+.tpl-row>.t12{flex:none}
+.tpl-chip{flex:none;display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px 0 10px;border-radius:18px;background:#1B2030;color:#fff;font-size:13px;white-space:nowrap}
+.tpl-chip span{color:rgba(255,255,255,.62);font-size:12px}
+.ag-live{display:flex;align-items:center;gap:8px;margin-top:12px;padding:9px 10px 9px 12px;border-radius:16px;background:#1B2030;color:#fff;font-size:13px;min-width:0}
+.ag-live .grow{min-width:0}
+.ag-live-k{flex:none;font-weight:600;font-variant-numeric:tabular-nums}
+.ag-live-n{flex:none;font-size:12px;color:rgba(255,255,255,.62)}
+.ag-live-x{flex:none;height:28px;padding:0 12px;border-radius:14px;background:rgba(255,255,255,.14);color:#fff;font-size:12.5px}
+.ag-pulse{flex:none;width:8px;height:8px;border-radius:50%;background:#7dd3a8;box-shadow:0 0 0 0 rgba(125,211,168,.6);animation:agp 1.4s infinite}
+@keyframes agp{0%{box-shadow:0 0 0 0 rgba(125,211,168,.55)}70%{box-shadow:0 0 0 8px rgba(125,211,168,0)}100%{box-shadow:0 0 0 0 rgba(125,211,168,0)}}
+.ag-card{margin-top:10px;padding:14px;border-radius:20px;background:#fff;box-shadow:inset 0 0 0 1px rgba(20,26,38,.07),0 14px 30px -24px rgba(20,26,38,.5);display:flex;flex-direction:column;gap:10px;min-width:0}
+.ag-head{display:flex;align-items:center;gap:10px;min-width:0}
+.ag-badge{flex:none;width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(150deg,#2a3145,#121621);color:#fff}
+.ag-t{font-size:12px;color:var(--label2);font-weight:600}
+.ag-goal{font-size:14.5px;font-weight:600;color:var(--ink)}
+.ag-st{flex:none;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:9px;background:rgba(20,26,38,.06);color:var(--label2)}
+.ag-st.ok{background:#DDF3EE;color:#0E6B58}.ag-st.warn{background:#FFF0D6;color:#8A4A08}.ag-st.bad{background:#FDE7E3;color:#B4321F}
+.ag-crit{font-size:13px;color:var(--ink);display:flex;gap:8px;align-items:baseline}
+.ag-crit span{flex:none;font-size:11.5px;color:var(--label2)}
+.ag-alert{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:14px;background:#FFF4E2;color:#6B3A08;font-size:13px;line-height:1.5}
+.ag-alert.bad{background:#FDECE8;color:#8C2716}
+.ag-pick{padding:12px;border-radius:16px;background:linear-gradient(160deg,#1f2536,#141826);color:#fff}
+.ag-pick-k{font-size:11.5px;color:rgba(255,255,255,.6);font-weight:600}
+.ag-pick-n{font-size:15.5px;font-weight:700;margin-top:3px;line-height:1.35}
+.ag-pick-m{font-size:12.5px;color:rgba(255,255,255,.75);margin-top:4px}
+.ag-pick-r{font-size:13px;line-height:1.5;margin-top:6px;color:rgba(255,255,255,.9)}
+.ag-sum{font-size:13px;line-height:1.55;color:var(--ink)}
+.ag-tbl-wrap{overflow-x:auto;margin:0 -14px;padding:0 14px;scrollbar-width:thin}
+.ag-tbl{border-collapse:separate;border-spacing:0;min-width:580px;width:100%;font-size:12.5px}
+.ag-tbl th{text-align:left;font-weight:600;font-size:11.5px;color:var(--label2);padding:0 8px 6px;white-space:nowrap}
+.ag-tbl td{padding:9px 8px;border-top:1px solid rgba(20,26,38,.07);vertical-align:top;color:var(--ink);line-height:1.4}
+.ag-tbl th:first-child,.ag-tbl td:first-child{position:sticky;left:0;background:#fff;z-index:1;width:170px}
+.ag-tbl tr.picked td{background:#F2F4FA}
+.ag-tbl tr.picked td:first-child{box-shadow:inset 3px 0 0 #1B2030}
+.ag-name{display:flex;gap:6px}
+.ag-no{flex:none;width:18px;height:18px;border-radius:6px;background:rgba(20,26,38,.07);display:grid;place-items:center;font-size:11px;font-weight:600}
+.ag-nm{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;font-weight:600;max-width:150px}
+.ag-nm em{font-style:normal;margin-left:6px;font-size:10.5px;padding:1px 6px;border-radius:6px;background:#1B2030;color:#fff;vertical-align:1px}
+.ag-price{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ag-pc{min-width:150px}
+.ag-pc span{display:block}.ag-pc .pro{color:#0E6B58}.ag-pc .con{color:#9A3412}
+.ag-meta{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--label2);text-align:left;padding:2px 0}
+.ag-log{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.ag-log li{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:7px 8px;border-radius:12px;background:#f6f6f8}
+.ag-log li.nochg{background:#FFF4E2}
+.ag-li{flex:none;width:20px;height:20px;border-radius:7px;background:#1B2030;color:#fff;font-size:11px;display:grid;place-items:center}
+.ag-th{color:var(--label2);font-size:12px;margin-top:2px}
+.ag-ms{flex:none;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.ag-ms i{display:block;font-style:normal;font-weight:400;font-size:11px;color:var(--label2)}
+.ag-btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ag-btns .btn-ghost{height:38px;padding:0 14px;font-size:14px}
+.ag-go{display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 16px;border-radius:19px;background:#1B2030;color:#fff;font-size:14px;font-weight:600}
+.ag-fb{display:flex;flex-direction:column;gap:8px;width:100%}
+.ag-chips{display:flex;flex-wrap:wrap;gap:6px}
+.ag-err{font-size:12.5px;color:#B4321F}
+.ag-ended{font-size:12.5px;color:var(--label2)}
+.ccard .ag-card{box-shadow:inset 0 0 0 1px rgba(20,26,38,.07)}

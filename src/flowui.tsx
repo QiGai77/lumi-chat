@@ -1,10 +1,12 @@
 /** Flow 编辑器（v0.17）：时间线（按块缩进）、逻辑 / 变量 / 类 / AI 视觉节点、类编辑、实时校验、每步耗时。 */
 import { useEffect, useMemo, useState } from 'react'
 import { GlassIcon, Icon } from './icons'
-import { streamChat, type Settings } from './api'
+import { MODELS, streamChat, type Settings } from './api'
+import { AgentCard, AgentLiveLine } from './agentui'
+import { STOP_LABEL } from './agentcore'
 import { meshVars, tint, useAppLook } from './appicon'
 import { blockDepths, canExtract, checkFlow, consumeRecording, extractSubflow, findClass, flowSummary, loadFlows, paramsIn, loadRuns, runFlow, runSplit, runSummary, saveFlows, startRecording, stepLabel, subflowGraph, tidy, upsertFlow,
-  type CondOp, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type SavedRun, type TraceItem } from './flow'
+  type CondOp, type StopKind, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type SavedRun, type TraceItem } from './flow'
 
 export function useFlows() {
   const [flows, setFlows] = useState<Flow[]>(loadFlows)
@@ -19,10 +21,10 @@ export function AppIcon({ app, pkg, s = 48 }: { app: string; pkg?: string; s?: n
 }
 
 /* ---------- 节点分类：图标与颜色 */
-type Cat = 'act' | 'logic' | 'var' | 'cls' | 'ai' | 'sub'
+type Cat = 'act' | 'logic' | 'var' | 'cls' | 'ai' | 'sub' | 'agent'
 const CAT_OF: Partial<Record<FlowStep['kind'], Cat>> = {
   if: 'logic', else: 'logic', endif: 'logic', while: 'logic', endwhile: 'logic', do: 'logic', dowhile: 'logic', for: 'logic', endfor: 'logic',
-  break: 'logic', continue: 'logic', call: 'sub', set: 'var', new: 'cls', method: 'cls', bind: 'cls', unbind: 'cls', ai: 'ai',
+  break: 'logic', continue: 'logic', call: 'sub', set: 'var', new: 'cls', method: 'cls', bind: 'cls', unbind: 'cls', ai: 'ai', agent: 'agent',
 }
 const catOf = (k: FlowStep['kind']): Cat => CAT_OF[k] || 'act'
 const CAT_COLOR: Record<Exclude<Cat, 'act'>, { solid: string; soft: string }> = {
@@ -31,9 +33,10 @@ const CAT_COLOR: Record<Exclude<Cat, 'act'>, { solid: string; soft: string }> = 
   cls: { solid: '#0E7A66', soft: '#DDF3EE' },
   ai: { solid: '#A2550A', soft: '#FFF0D6' },
   sub: { solid: '#B23A62', soft: '#FFE6EE' },
+  agent: { solid: '#FFFFFF', soft: '#1B2030' },
 }
 const kindIcon: Record<string, string> = {
-  tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', ai: 'eye',
+  tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', ai: 'eye', agent: 'agent',
   if: 'branch', else: 'branch', endif: 'check', while: 'repeat', endwhile: 'check', do: 'repeat', dowhile: 'repeat', for: 'repeat', endfor: 'check',
   set: 'braces', call: 'layers', break: 'exit', continue: 'right', new: 'cube', method: 'method',
 }
@@ -52,6 +55,9 @@ const ADD_GROUPS: { title: string; items: AddItem[] }[] = [
     { label: '等 1 秒', sub: '固定等待', icon: 'hourglass', cat: 'act', make: () => [{ kind: 'sleep', ms: 1000 }] },
     { label: '返回', sub: '系统返回键', icon: 'left', cat: 'act', make: () => [{ kind: 'key', key: 'back' }] },
     { label: '向下滚动', sub: '滚动列表', icon: 'scroll', cat: 'act', make: () => [{ kind: 'scroll', forward: true }] },
+  ] },
+  { title: 'AI 接管', items: [
+    { label: 'AI 接管', sub: '前面的步骤跑完后，AI 自己看、比较、挑', icon: 'agent', cat: 'agent', make: () => [{ kind: 'agent', goal: '', criteria: '', maxSteps: 25, model: 'argon' }] },
   ] },
   { title: 'AI 视觉', items: [
     { label: 'AI 点击', sub: '描述要点什么', icon: 'eye', cat: 'ai', make: () => [{ kind: 'ai', goal: '', act: 'tap' }] },
@@ -150,6 +156,7 @@ function StepEditor({ s, set, f, flows, varClass }: { s: FlowStep; set: (s: Flow
         ? <div className="cache-note"><Icon n="bolt" s={13} w={2.2} /><span className="grow">已缓存位置：{s.sel.text || s.sel.desc || s.sel.id}。下次直接走原生，不调模型</span><button className="chip-t" onClick={() => { const n = { ...s }; delete n.sel; delete n.x; delete n.y; set(n) }}>清除</button></div>
         : <div className="cache-note muted"><Icon n="eye" s={13} w={2.2} /><span>第一次运行要一次模型往返（截图 + 元素列表），找到后自动存下位置，之后走原生</span></div>}
     </>
+    case 'agent': return <AgentEditor s={s} set={set} />
     case 'if': case 'while': case 'dowhile': return <>
       <CondEditor c={s.cond || ex()} set={c => set({ ...s, cond: c })} />
       {s.kind !== 'if' && <Field label="最多几轮"><input className="inp" inputMode="numeric" value={s.max ?? ''} placeholder="默认 20" onChange={e => set({ ...s, max: Number(e.target.value) || undefined })} /></Field>}
@@ -181,6 +188,26 @@ function StepEditor({ s, set, f, flows, varClass }: { s: FlowStep; set: (s: Flow
     default: return null
   }
 }
+/* ---------- v0.24 AI 接管：目标、挑选标准、轮数、模型、在哪类操作前停下 */
+const STOP_ORDER: StopKind[] = ['pay', 'submit', 'send', 'delete']
+function AgentEditor({ s, set }: { s: FlowStep; set: (s: FlowStep) => void }) {
+  const stops = s.stopBefore?.length ? s.stopBefore : STOP_ORDER
+  const toggle = (k: StopKind) => { if (k === 'pay') return; const n = stops.includes(k) ? stops.filter(x => x !== k) : [...stops, k]; set({ ...s, stopBefore: n.length === STOP_ORDER.length ? undefined : n }) }
+  return <>
+    <Field label="目标"><textarea className="inp ag-goal-in" rows={3} value={s.goal || ''} onChange={e => set({ ...s, goal: e.target.value })} placeholder="比如 在搜索结果里比较至少 5 款{关键词}，按 {预算} 和口碑挑最合适的一款，停在商品详情页" /></Field>
+    <Field label="挑选标准（可选）"><input className="inp" value={s.criteria || ''} onChange={e => set({ ...s, criteria: e.target.value || undefined })} placeholder="预算、品牌、评分、销量偏好，可用 {参数}" /></Field>
+    <div className="row2">
+      <Field label="最多几轮"><input className="inp" inputMode="numeric" value={s.maxSteps ?? ''} placeholder="25" onChange={e => set({ ...s, maxSteps: Number(e.target.value) || undefined })} /></Field>
+      <Field label="最多几分钟"><input className="inp" inputMode="decimal" value={s.maxMinutes ?? ''} placeholder="5" onChange={e => set({ ...s, maxMinutes: Number(e.target.value) || undefined })} /></Field>
+    </div>
+    <Field label="模型"><div className="seg-s">{MODELS.map(m => <button key={m.id} className={(s.model || 'argon') === m.id ? 'on' : ''} onClick={() => set({ ...s, model: m.id === 'argon' ? undefined : m.id })}>{m.name}{m.id === 'argon' ? '（准）' : m.id === 'helium' ? '（快）' : ''}</button>)}</div></Field>
+    <Field label="输出"><div className="seg-s">{([['compare', '对比卡'], ['text', '只要结论'], ['none', '不显示']] as const).map(([k, l]) => <button key={k} className={(s.output || 'compare') === k ? 'on' : ''} onClick={() => set({ ...s, output: k === 'compare' ? undefined : k })}>{l}</button>)}</div></Field>
+    <div className="t12">在这些操作前停下来交给你</div>
+    <div className="dev-acts">{STOP_ORDER.map(k => <button key={k} className={`chip-t ${stops.includes(k) ? 'on' : ''}`} disabled={k === 'pay'} onClick={() => toggle(k)}>{STOP_LABEL[k]}{k === 'pay' ? '（总是）' : ''}</button>)}</div>
+    <div className="cache-note ag-note"><Icon n="shield" s={13} w={2.2} /><span>每轮看一次屏幕、问一次模型（几秒到十几秒一轮），准确优先。遇到登录、验证码会停下问你；付款永远不点。</span></div>
+  </>
+}
+
 /* ---------- 子 Flow：选一个已保存的 Flow（会造成循环的灰掉），给它的参数传值 */
 function SubflowEditor({ s, set, f, flows }: { s: FlowStep; set: (s: FlowStep) => void; f: Flow; flows: Flow[] }) {
   const t = flows.find(x => x.id === s.flowId || x.name === s.flowId)
@@ -256,12 +283,13 @@ function ClassSheet({ c, flows, self, onSave, onDelete, onClose }: { c: FlowClas
 }
 
 /* ---------- 运行明细（v0.23：每步耗时拆成 查找 / 动作 / 等页面 / 识字 / 视觉，标出命中的是哪一层；保留最近 12 次） */
-const SRC_LABEL: Record<TraceItem['src'], string> = { native: '原生', cache: '缓存', vision: '视觉', coord: '坐标', ocr: '识字', logic: '逻辑', skip: '跳过', fail: '失败' }
-const TIER_LABEL: Record<string, string> = { ahead: '预找到', id: 'id', text: '文字', walk: '遍历', bounds: '缓存坐标', focus: '焦点框', edit: '输入框', coord: '坐标', ocr: '识字', vision: '视觉', launch: '启动', retry: '重试' }
+const SRC_LABEL: Record<TraceItem['src'], string> = { native: '原生', cache: '缓存', vision: '视觉', coord: '坐标', ocr: '识字', logic: '逻辑', skip: '跳过', fail: '失败', agent: '接管' }
+const TIER_LABEL: Record<string, string> = { agent: 'AI 接管', ahead: '预找到', id: 'id', text: '文字', walk: '遍历', bounds: '缓存坐标', focus: '焦点框', edit: '输入框', coord: '坐标', ocr: '识字', vision: '视觉', launch: '启动', retry: '重试' }
 const SEGS = [['lk', '查找'], ['ac', '动作'], ['wt', '等页面'], ['oc', '识字'], ['vs', '视觉']] as const
 const tierText = (x: TraceItem) => (x.tier || '').split('+').filter(Boolean).map(k => TIER_LABEL[k] || k).join(' → ')
 export function RunPanel({ r, onPick }: { r: RunResult; onPick?: (i: number) => void }) {
-  const t = (r.trace || []).filter(x => x.src !== 'logic')
+  const t = (r.trace || []).filter(x => x.src !== 'logic' && x.src !== 'agent')
+  const agentT = (r.trace || []).filter(x => x.src === 'agent')
   const logic = (r.trace || []).length - t.length
   const max = Math.max(1000, ...t.map(x => x.ms))
   const sp = runSplit(t)
@@ -269,6 +297,8 @@ export function RunPanel({ r, onPick }: { r: RunResult; onPick?: (i: number) => 
   return (
     <div className={`run-panel ${r.ok ? 'ok' : 'bad'}`}>
       <div className="rp-head"><span className="rp-dot" /><span className="grow b">{runSummary(r)}</span></div>
+      {(r.agent || []).filter(o => o.cfg.output !== 'none').map(o => <AgentCard key={o.id} o={o} />)}
+      {agentT.length > 0 && <div className="t12">{agentT.map(x => `「${x.label}」用了 ${(x.ms / 1000).toFixed(1)} 秒`).join('；')}（AI 接管每轮一次模型往返，不计入下面的原生均值）</div>}
       <div className="rp-stats">
         <div><b>{r.ms != null ? (r.ms / 1000).toFixed(1) : '—'}</b><span>总秒数</span></div>
         <div><b>{sp.n ? sp.ms : '—'}</b><span>原生均值 ms</span></div>
@@ -386,6 +416,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
 - 付款、提交订单、发送、删除这类步骤加 confirm:true
 - 已有的 call 步（{"kind":"call","flowId","args"} 运行另一个已保存的 Flow，当作一步）保持不变；可以用 call 调用下面列出的已有 Flow 代替一段重复步骤，args 给子 Flow 的 {参数} 传值；不能调用自己或形成循环
 - 允许用 if/else/while/do-while/for/set/call 等逻辑节点代替重复步骤；循环必须有明确退出条件（cond 或 for 的 from/to），while/do-while 默认最多 20 次
+- 需要看内容做判断的部分（挑选、比较、筛选，比如 最便宜的、评分最高的、最合适的一款）用一个 AI 接管步代替一串不稳定的点击：{"kind":"agent","goal":"在搜索结果里比较至少 5 款{关键词}，按 {预算} 和口碑挑最合适的一款，停在商品详情页","criteria":"{预算}"}；固定导航（打开应用、搜索、输入）保持确定性步骤，放在 agent 步前面。已有的 agent 步保持不变。agent 步会在付款、提交订单、发送、删除前自己停下
 - 选择器明显不稳定（比如只有坐标、文字会变）的点击，可以换成 {"kind":"ai","goal":"简短描述","act":"tap"}，或在 tap 上加 "vision":true；不要把稳定的选择器换成 ai
 - 已有的 new / method 类调用保持不变
 - 禁止编造不存在的选择器；只用录制/屏幕上真实出现的 id、文字或坐标
@@ -440,7 +471,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
       <div className="sec sec-row"><span className="grow">{draft ? '优化后的步骤（预览）' : sel ? `选择要合并的步骤 · 已选 ${sel.length}` : `步骤 · ${f.steps.length}`}</span>
         {!draft && f.steps.length > 1 && <button className={`chip-t ${sel ? 'on' : ''}`} onClick={() => { setSel(sel ? null : []); setOpen(null) }}><Icon n="checks" s={13} w={2.2} />{sel ? '取消多选' : '多选'}</button>}</div>
       <ol className={`flow-steps tl ${sel ? 'selecting' : ''}`}>{S.steps.map((s, i) => { const c = catStyle(catOf(s.kind), t); const closing = /^end|^dowhile$|^else$/.test(s.kind); const child = s.kind === 'call' ? flows.find(x => x.id === s.flowId || x.name === s.flowId) : undefined; const picked = !!sel?.includes(i); return (
-        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''} ${closing ? 'closing' : ''} ${picked ? 'picked' : ''} ${s.kind === 'call' ? 'is-sub' : ''}`} style={{ ['--tc' as string]: c.solid, ['--ts' as string]: c.soft, ['--d' as string]: depths[i] }}>
+        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''} ${closing ? 'closing' : ''} ${picked ? 'picked' : ''} ${s.kind === 'call' ? 'is-sub' : ''} ${s.kind === 'agent' ? 'is-agent' : ''}`} style={{ ['--tc' as string]: c.solid, ['--ts' as string]: c.soft, ['--d' as string]: depths[i] }}>
           <span className="tl-node">{s.kind === 'launch' ? <AppIcon app={f.app} pkg={f.pkg} s={30} /> : child ? <AppIcon app={child.app} pkg={child.pkg} s={30} /> : <Icon n={stepIcon(s)} s={16} w={2} />}</span>
           <div className="tl-card">
             <button className="fs-head" onClick={() => { if (draft) return; if (sel) { setSel(picked ? sel.filter(x => x !== i) : [...sel, i]); return } setOpen(open === i ? null : i) }}>
@@ -449,6 +480,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
                 : <span className="grow ell">{s.kind === 'call' && !s.note ? (s.flowId ? `子 Flow「${s.flowId}」不存在` : '子 Flow：选一个 Flow') : stepLabel(s)}</span>}
               {s.kind === 'call' && <span className="fs-tag sub">子 Flow</span>}
               {s.kind === 'ai' && <span className={`fs-tag ${s.sel ? 'ok' : 'ai'}`}>{s.sel ? '已缓存' : 'AI'}</span>}
+              {s.kind === 'agent' && <span className="fs-tag agent">AI 接管</span>}
               {s.vision && <span className="fs-tag ai">AI 兜底</span>}
               {s.optional && <span className="fs-tag">可选</span>}{s.confirm && <span className="fs-tag warn">确认</span>}
             </button>
@@ -457,7 +489,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
               <input className="inp" value={s.note || ''} onChange={e => setStep(i, { ...s, note: e.target.value || undefined })} placeholder="备注（显示在悬浮条上）" />
               {s.sel?.id && <div className="t12 ell">控件 id：{s.sel.id}</div>}
               <div className="dev-acts">
-                {catOf(s.kind) === 'act' || s.kind === 'ai' ? <>
+                {catOf(s.kind) === 'act' || s.kind === 'ai' || s.kind === 'agent' ? <>
                   <button className={`chip-t ${s.optional ? 'on' : ''}`} onClick={() => setStep(i, { ...s, optional: !s.optional || undefined })}>可选</button>
                   <button className={`chip-t ${s.confirm ? 'on' : ''}`} onClick={() => setStep(i, { ...s, confirm: !s.confirm || undefined })}>执行前确认</button></> : null}
                 <button className="chip-t" onClick={() => move(i, -1)}>上移</button><button className="chip-t" onClick={() => move(i, 1)}>下移</button>
@@ -491,6 +523,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
           <button className="btn-ghost danger" onClick={() => { if (confirm(`删除 Flow「${f.name}」？`)) { saveFlows(loadFlows().filter(x => x.id !== f.id)); done() } }}>删除 Flow</button>
         </div></>}
       {msg && <div className="imp-msg ok" style={{ marginTop: 12 }}>{msg}</div>}
+      <AgentLiveLine />
       {res && <RunPanel r={res} onPick={i => setOpen(i)} />}
       <RecentRuns flowId={f.id} onShow={r => setRes(r)} />
       {add && <AddSheet classes={[...(f.classes || []), ...flows.filter(x => x.id !== f.id).flatMap(x => x.classes || [])]} flows={flows.filter(x => x.id !== f.id)} look={t} onAdd={insert} onClose={() => setAdd(false)} />}
