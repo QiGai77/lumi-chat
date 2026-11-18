@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Glass } from './glass'
 import { GlassIcon, Icon } from './icons'
 import { MODEL_NAME, MODELS, PLANS, PLATFORM_URL, feedbackPage, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
@@ -12,7 +13,7 @@ import { RpView } from './rp'
 import { Phone, isNative, isPhoneTool, runTool, takeTrace, toolSpecs, toStep } from './phone'
 import { FAMILIES, meshBg, meshVars, tint, useAppLook } from './appicon'
 import { bentoLayout, bentoOrder, type BentoCell, type BentoSize } from './bento'
-import { flowSummary, loadFlows, runFlow, runSummary, stepLabel, tidy, upsertFlow, type Flow, type RunResult } from './flow'
+import { consumeRecording, startRecording, flowSummary, loadFlows, runFlow, runSummary, stepLabel, type Flow, type RunResult } from './flow'
 import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
@@ -36,11 +37,13 @@ const openLink = (url: string) => { if (isNative) Phone.openUrl({ url }).catch((
 export default function App() {
   const [view, setView] = useState<View>('home')
   const wide = () => window.innerWidth >= 980
-  // v0.18：折叠态就是侧栏的「关闭」态。关上后左侧永远留一条图标栏（新对话 / 技能 / MCP + 展开按钮），没有完全隐藏的抽屉，也没有另外的迷你开关。
-  // 展开：桌面推开内容显示完整侧栏；手机是盖在内容上的抽屉（带遮罩），关上回到图标栏。状态存 localStorage 'lumi.sideMini'（'1' = 折叠）。
-  const [side, setSideS] = useState(() => { const v = localStorage.getItem('lumi.sideMini'); return v == null ? wide() : v === '0' })
-  const setSide = (o: boolean) => { localStorage.setItem('lumi.sideMini', o ? '0' : '1'); setSideS(o) }
-  const toggleSide = () => setSide(!side)
+  // v0.22：回到原来的抽屉：默认隐藏，点侧栏按钮打开完整侧栏（手机盖在内容上 + 遮罩，点外面关；桌面推开内容）。
+  // 图标栏（新对话 / 技能 / MCP）只在长按侧栏按钮后出现，再长按隐藏，存 localStorage 'lumi.sideRail'（'1' = 显示）。单击永远只开关抽屉。
+  const [side, setSide] = useState(wide)
+  const [rail, setRailS] = useState(() => localStorage.getItem('lumi.sideRail') === '1')
+  const toggleSide = () => setSide(o => !o)
+  const toggleRail = () => setRailS(r => { const n = !r; localStorage.setItem('lumi.sideRail', n ? '1' : '0'); return n })
+  const sideBtn = useLongPress(toggleSide, () => { toggleRail(); if (!wide()) setSide(false) })
   const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
   const [projects, setProjects] = useState<Project[]>(loadProjects)
@@ -147,23 +150,24 @@ export default function App() {
   const [wallVer, setWallVer] = useState(() => Number(localStorage.getItem('lumi.wallVer') || 0))
   useEffect(() => { if (settings.theme === 'wallpaper') blobUrl('wallpaper:' + wallVer).then(u => setWall(u)); else setWall(null) }, [settings.theme, wallVer])
   const plan = gu?.planName || null
-  const back = (to: View, title: string) => <div className="sub-head"><button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
-  const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h"><div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
+  const menuBtn = <button className="side-btn press" {...sideBtn} aria-label="侧栏" title="侧栏（长按显示 / 隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
+  const back = (to: View, title: string) => <div className="sub-head">{menuBtn}<button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
+  const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h">{menuBtn}<div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
   const flowEd = view.startsWith('flow:') ? view.slice(5) : null
   const flowApp = view.startsWith('flowapp:') ? view.slice(8) : null
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme} ${side ? 'side-open' : 'side-mini'}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${rail ? 'rail-on' : 'rail-off'}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} mini={!side} onToggleMini={toggleSide} onUpgrade={() => openLink(purchasePage(settings))} />
+        plan={plan} side={side} rail={rail} btn={sideBtn} onUpgrade={() => openLink(purchasePage(settings))} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
           <div className="scroll">
             <div className={`wrap ${view === 'home' ? 'wide' : ''}`}>
-              {view === 'home' && <><div className="home-top" />
+              {view === 'home' && <><div className="home-top">{menuBtn}</div>
                 <Home convs={convs} tier={tier} think={think} setThink={setThink} onMode={() => setSheet(true)}
                   onSend={p => newChat(p)} onOpen={openConv} onDelete={del} /></>}
               {view === 'flows' && <>{head('Flow', '把常用的手机操作存成一键工作流')}<FlowsPage go={go} /></>}
@@ -191,7 +195,7 @@ export default function App() {
           </div>
         </div>
         {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
-          project={projects.find(p => p.id === open.project)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
+          project={projects.find(p => p.id === open.project)} menuBtn={<button className="cb-btn cb-side" {...sideBtn} aria-label="侧栏"><Icon n="sidebar" s={22} w={1.9} /></button>} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
       </main>
       <Preview />
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
@@ -200,20 +204,34 @@ export default function App() {
   )
 }
 
+/* ---------------- 长按：侧栏按钮单击开关抽屉，长按（480ms）开关图标栏 */
+type LongPress = { onPointerDown: (e: React.PointerEvent) => void; onPointerUp: () => void; onPointerLeave: () => void; onPointerCancel: () => void; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void }
+function useLongPress(tap: () => void, long: () => void, ms = 480): LongPress {
+  const t = useRef<number | null>(null), fired = useRef(false)
+  const clear = () => { if (t.current != null) { clearTimeout(t.current); t.current = null } }
+  return {
+    onPointerDown: () => { fired.current = false; clear(); t.current = window.setTimeout(() => { t.current = null; fired.current = true; if (isNative) Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); long() }, ms) },
+    onPointerUp: clear, onPointerLeave: clear, onPointerCancel: clear,
+    onClick: () => { if (fired.current) { fired.current = false; return } tap() },
+    onContextMenu: e => e.preventDefault(),
+  }
+}
+
 /* ---------------- sidebar (ChatGPT 式) */
-function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini, onToggleMini, onUpgrade }: {
+function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, side, rail, btn, onUpgrade }: {
   view: View; go: (v: View) => void; convs: Conv[]; openId: string | null; onOpen: (id: string) => void; onNew: () => void
-  onDelete: (id: string) => void; plan: string | null; mini: boolean; onToggleMini: () => void; onUpgrade: () => void
+  onDelete: (id: string) => void; plan: string | null; side: boolean; rail: boolean; btn: LongPress; onUpgrade: () => void
 }) {
   const [q, setQ] = useState('')
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
   const item = (v: View, icon: string, label: string, tone: string) => (
     <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) || (v === 'flows' && view.startsWith('flow')) ? 'on' : ''}`} onClick={() => go(v)} title={label}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
-  if (mini) {
+  if (!side && !rail) return null
+  if (!side) {
     return (
       <aside className="side rail">
         <div className="s-head">
-          <button className="side-btn" onClick={onToggleMini} aria-label="展开侧栏" title="展开侧栏"><Icon n="sidebar" s={22} w={1.9} /></button>
+          <button className="side-btn" {...btn} aria-label="展开侧栏" title="展开侧栏（长按隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
         </div>
         <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新对话" aria-label="新对话"><GlassIcon n="compose" tone="coral" s={30} /><span className="rail-l">新对话</span></button>
         <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能" aria-label="技能"><GlassIcon n="spark" tone="plum" s={30} /><span className="rail-l">技能</span></button>
@@ -224,7 +242,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
   return (
     <aside className="side">
       <div className="s-head">
-        <button className="side-btn" onClick={onToggleMini} aria-label="折叠侧栏" title="折叠成图标栏"><Icon n="sidebar" s={22} w={1.9} /></button>
+        <button className="side-btn" {...btn} aria-label="收起侧栏" title="收起侧栏（长按显示 / 隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
       <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新对话</button>
@@ -651,16 +669,10 @@ function ProjectStore({ p, save }: { p: Project; save: (p: Project) => void }) {
 function useRecordReturn(go: (v: View) => void, setMsg: (m: string) => void) {
   useEffect(() => {
     const vis = async () => {
-      if (document.hidden || !isNative) return
-      const rec = localStorage.getItem('lumi.recording'); if (!rec) return
+      if (document.hidden) return
       try {
-        const st = await Phone.recordStatus(); if (st.recording) return
-        localStorage.removeItem('lumi.recording')
-        const meta = JSON.parse(rec) as { app: string; pkg: string }
-        const steps = tidy(st.steps || [], meta.app)
-        if (steps.length < 2) { setMsg('没录到操作，再试一次'); return }
-        const fl = upsertFlow({ id: uid(), app: meta.app, pkg: meta.pkg, name: '新的 Flow', desc: '', steps, params: [], updated: Date.now(), runs: 0 })
-        go(`flow:${fl.id}` as View)
+        const r = await consumeRecording(); if (!r) return
+        if ('error' in r) setMsg(r.error); else go(`flow:${r.id}` as View)
       } catch (e) { setMsg((e as Error).message) }
     }
     document.addEventListener('visibilitychange', vis); vis()
@@ -668,12 +680,7 @@ function useRecordReturn(go: (v: View) => void, setMsg: (m: string) => void) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 }
 async function startRecord(a: { label: string; pkg: string }, setMsg: (m: string) => void) {
-  try {
-    if (!isNative) { setMsg('只有安卓 App 里可以录制'); return }
-    if (!(await Phone.a11yStatus()).enabled) { setMsg('先到「手机连接」里打开无障碍'); return }
-    localStorage.setItem('lumi.recording', JSON.stringify({ app: a.label, pkg: a.pkg }))
-    await Phone.recordStart({ pkg: a.pkg, app: a.label })
-  } catch (e) { setMsg((e as Error).message) }
+  try { const why = await startRecording({ app: a.label, pkg: a.pkg }); if (why) setMsg(why) } catch (e) { setMsg((e as Error).message) }
 }
 
 function AppPicker({ onPick, onClose, onAsk }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void; onAsk?: () => void }) {
@@ -1209,9 +1216,9 @@ function MediaView({ m }: { m: Media }) {
     : <a href={url} target="_blank" rel="noreferrer"><img className="media" src={url} alt={m.prompt} /></a>
 }
 
-function Chat({ conv, settings, tier, think, pending, clearPending, project, onNew, onMode, update }: {
+function Chat({ conv, settings, tier, think, pending, clearPending, project, menuBtn, onNew, onMode, update }: {
   conv: Conv; settings: Settings; tier: Tier; think: boolean; pending: Pending | null; clearPending: () => void; project?: Project
-  onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
+  menuBtn?: React.ReactNode; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1403,6 +1410,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
       </div>
       <div className="edge-top" />
       <Glass className="chat-bar" radius={26}>
+        {menuBtn}
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>
@@ -1647,7 +1655,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.21 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.22 · 开源 MIT</div>
     </section>
   )
 }

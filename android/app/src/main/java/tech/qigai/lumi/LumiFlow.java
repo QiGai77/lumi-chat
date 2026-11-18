@@ -57,6 +57,7 @@ public class LumiFlow {
 
     // 录制
     volatile boolean recording = false;
+    volatile boolean resuming = false;
     final List<JSONObject> rec = new ArrayList<>();
     private String lastPkg = ""; private JSONObject pendingInput; 
 
@@ -490,12 +491,16 @@ public class LumiFlow {
     }
 
     /* ---------------- 录制 */
-    void recordStart(String pkg, String app) {
+    void recordStart(String pkg, String app) { recordStart(pkg, app, false); }
+    /** resume = 继续录制（v0.22）：不记「打开应用」这一步，把应用切回前台（已在后台时回到原来的页面），新步骤由 JS 接到已有 Flow 后面。 */
+    void recordStart(String pkg, String app, boolean resume) {
         synchronized (rec) { rec.clear(); }
         pendingInput = null; lastPkg = "";
+        resuming = resume;
         recording = true;
         if (pkg != null && !pkg.isEmpty()) {
-            try { JSONObject l = new JSONObject(); l.put("kind", "launch"); l.put("pkg", pkg); l.put("app", app); add(l); lastPkg = pkg; } catch (Exception ignored) { }
+            if (resume) lastPkg = pkg;
+            else try { JSONObject l = new JSONObject(); l.put("kind", "launch"); l.put("pkg", pkg); l.put("app", app); add(l); lastPkg = pkg; } catch (Exception ignored) { }
             Intent i = s.getPackageManager().getLaunchIntentForPackage(pkg);
             if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); s.startActivity(i); }
         }
@@ -503,7 +508,7 @@ public class LumiFlow {
     }
     private void updateRecBar() {
         int c; synchronized (rec) { c = rec.size(); }
-        showBar("● 录制中 · " + c + " 步", "完成", () -> { recording = false; flushInput(); hideBar(0); bringBack(); }, "撤销", () -> { synchronized (rec) { if (rec.size() > 1) rec.remove(rec.size() - 1); } updateRecBar(); });
+        showBar((resuming ? "● 继续录制 · 新增 " : "● 录制中 · ") + c + " 步", "完成", () -> { recording = false; flushInput(); hideBar(0); bringBack(); }, "撤销", () -> { synchronized (rec) { if (rec.size() > (resuming ? 0 : 1)) rec.remove(rec.size() - 1); } updateRecBar(); });
     }
     private void add(JSONObject o) { synchronized (rec) { rec.add(o); } }
     private void flushInput() { if (pendingInput != null) { add(pendingInput); pendingInput = null; } }

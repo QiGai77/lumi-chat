@@ -4,9 +4,10 @@ import { Phone, isNative } from './phone'
 import { loadSettings } from './api'
 import { visionLocate, type VisionReq } from './vision'
 import { stores } from './custom'
-import { applyLearned, expandCalls, fill, paramsIn, tidy, validateClasses, validateFlow, type Flow, type FlowStep, type Learned, type VarValue } from './flowcore'
+import { applyLearned, canExtract, expandCalls, fill, paramsIn, tidy, validateClasses, validateFlow, type Flow, type FlowStep, type Learned, type VarValue } from './flowcore'
 export * from './flowcore'
 
+const uid = () => Math.random().toString(36).slice(2, 10)
 const K = 'lumi.flows'
 export const loadFlows = (): Flow[] => { try { return JSON.parse(localStorage.getItem(K) || '[]') } catch { return [] } }
 export const saveFlows = (f: Flow[]) => {
@@ -17,6 +18,60 @@ export const saveFlows = (f: Flow[]) => {
 // v0.20：对话里的确认卡（custom.ts）也走这里存 Flow，保持同步到手机文件夹
 stores.flows = { load: loadFlows, save: saveFlows }
 export const upsertFlow = (fl: Flow) => { const a = loadFlows(); const i = a.findIndex(x => x.id === fl.id); if (i >= 0) a[i] = fl; else a.unshift(fl); saveFlows(a); return fl }
+
+/* ---------- v0.22 录制返回：新建 Flow，或「继续录制」时把新步骤接到已有 Flow 里 */
+export interface RecMeta { app: string; pkg: string; appendTo?: string; at?: number }
+export type RecResult = { id: string; added: number; appended: boolean } | { error: string }
+/** 把录到的步骤接进 fl：去掉重复的打开应用，插在 at（默认最后）。纯逻辑，网页里也能测。 */
+export function appendRecorded(fl: Flow, raw: FlowStep[], at?: number): RecResult {
+  const hasLaunch = fl.steps.some(s => s.kind === 'launch')
+  const add = tidy(raw, fl.app).filter(s => !(s.kind === 'launch' && (hasLaunch || (at ?? fl.steps.length) > 0)))
+  if (!add.length) return { error: '没录到新的操作' }
+  const pos = Math.max(0, Math.min(at ?? fl.steps.length, fl.steps.length))
+  const steps = [...fl.steps]; steps.splice(pos, 0, ...add)
+  upsertFlow({ ...fl, steps, params: paramsIn(steps), updated: Date.now() })
+  return { id: fl.id, added: add.length, appended: true }
+}
+/** 回到 App 时调用：有一次刚结束的录制就处理掉（只处理一次）。 */
+export async function consumeRecording(): Promise<RecResult | null> {
+  if (!isNative) return null
+  const rec = localStorage.getItem('lumi.recording'); if (!rec) return null
+  const st = await Phone.recordStatus(); if (st.recording) return null
+  if (localStorage.getItem('lumi.recording') !== rec) return null
+  localStorage.removeItem('lumi.recording')
+  const meta = JSON.parse(rec) as RecMeta
+  if (meta.appendTo) {
+    const fl = loadFlows().find(x => x.id === meta.appendTo)
+    if (!fl) return { error: '要接着录的 Flow 已经不在了' }
+    return appendRecorded(fl, st.steps || [], meta.at)
+  }
+  const steps = tidy(st.steps || [], meta.app)
+  if (steps.length < 2) return { error: '没录到操作，再试一次' }
+  const fl = upsertFlow({ id: uid(), app: meta.app, pkg: meta.pkg, name: '新的 Flow', desc: '', steps, params: paramsIn(steps), updated: Date.now(), runs: 0 })
+  return { id: fl.id, added: steps.length, appended: false }
+}
+/** 开始录制；appendTo 时是「继续录制」：回到应用当前页面接着录，不新加打开应用这一步。 */
+export async function startRecording(meta: RecMeta): Promise<string | null> {
+  if (!isNative) return '只有安卓 App 里可以录制'
+  if (!(await Phone.a11yStatus()).enabled) return '先到「手机连接」里打开无障碍'
+  localStorage.setItem('lumi.recording', JSON.stringify(meta))
+  await Phone.recordStart({ pkg: meta.pkg, app: meta.app, resume: !!meta.appendTo })
+  return null
+}
+
+/** 合并：把 fl 的第 from–to 步存成一个新的子 Flow，原位置换成一个 call 步（参数原样往下传）。返回新 Flow。 */
+export function extractSubflow(fl: Flow, from: number, to: number, name?: string): { parent: Flow; child: Flow } | { error: string } {
+  const why = canExtract(fl.steps, from, to); if (why) return { error: why }
+  const part = tidy(fl.steps.slice(from, to + 1).map(s => JSON.parse(JSON.stringify(s)) as FlowStep))
+  const params = paramsIn(part)
+  const child: Flow = { id: uid(), app: fl.app, pkg: fl.pkg, name: name || `${fl.name} · 子流程`, desc: `从「${fl.name}」第 ${from + 1}–${to + 1} 步合并`, steps: part, params, updated: Date.now(), runs: 0, fast: fl.fast, vars: fl.vars }
+  const call: FlowStep = { kind: 'call', flowId: child.id, ...(params.length ? { args: Object.fromEntries(params.map(p => [p, `{${p}}`])) } : {}) }
+  const steps = [...fl.steps.slice(0, from), call, ...fl.steps.slice(to + 1)]
+  const parent = { ...fl, steps, params: paramsIn(steps), updated: Date.now() }
+  const all = loadFlows().filter(x => x.id !== fl.id)
+  saveFlows([parent, child, ...all])
+  return { parent, child }
+}
 
 export interface TraceItem { pc: number; i?: number; fid?: string; label: string; ms: number; src: 'native' | 'cache' | 'vision' | 'coord' | 'logic' | 'skip' | 'fail' }
 export interface RunResult {
@@ -37,7 +92,8 @@ export async function runFlow(fl: Flow, vals: Record<string, string> = {}): Prom
   if (errors.length) return { ok: false, done: 0, total: fl.steps.length, failedAt: 0, reason: errors.join('；') }
   const own = all.find(x => x.id === fl.id) || fl
   const tagged = fl.steps.map((s, i) => ({ ...s, _i: i, _fid: fl.id }))
-  const steps = expandCalls(fill(tagged, vals), all, 0, [], { own })
+  // v0.22：子 Flow 里没被 call.args 填上的 {参数} 用外层同名参数再填一次
+  const steps = fill(expandCalls(fill(tagged, vals), all, 0, [], { own }), vals)
   const modelMs: number[] = []
   const sub = await Phone.addListener('flowVision', async (d: VisionReq) => {
     try {
@@ -75,10 +131,9 @@ export const flowSummary = (f: Flow[]) => f.length
 export const FLOW_TOOLS = [
   { name: 'flow_list', desc: '列出用户保存的 Flow（按应用分组的固定操作流程）。', params: {} },
   { name: 'flow_run', desc: '运行一个 Flow，比运行逐步操作快很多。params 填 Flow 需要的参数。失败会返回卡住的步骤和当时的屏幕，你可以接着手动完成。', params: { id: { type: 'string' }, params: { type: 'object', description: '参数，比如 {"关键词":"露营"}，可省略' } } },
-  { name: 'flow_save', desc: '新建或更新一个 Flow。steps 是步骤数组，每步 {kind, sel:{id,text,desc}, x, y, text, app, pkg, key, forward, ms, optional, confirm, note}。kind 可选 launch/tap/input/enter/scroll/swipe/key/wait/sleep/ai/new/method/if/else/endif/while/endwhile/do/dowhile/for/endfor/break/continue/set/call。逻辑节点：if/while/dowhile 带 cond{kind:exists|not_exists|text|var, sel, text, var, op(==|!=|>|<|>=|<=|contains), value}；set{var, value}，value 支持 ${变量}、四则、拼接、point "0.5,0.3"、struct JSON；for{var, from, to, step?} 含端点；call{flowId} 调子流程；tap 可用 pointVar 指向 point 变量；变量可用 a.b 读写字段（point 的 x/y、struct、对象）。v0.17：ai{goal, act:tap|long|input, text?} 用 AI 视觉找元素（首跑要一次模型往返，找到的选择器自动存回，之后走原生）；类 classes:[{name, fields:{字段:默认值}, methods:[{name, params?, steps 或 flowId}]}]，new{var, cls, args?} 实例化，method{var, method, args?} 调用，方法里用 this.字段。循环嵌套最多 8 层，单循环默认最多 20 次（步上用 max 覆盖）。会变的内容写成 {参数名}。付款、提交订单、发送这类步骤要设 confirm:true。', params: { id: { type: 'string', description: '更新已有 Flow 时填，可省略' }, app: { type: 'string' }, name: { type: 'string' }, desc: { type: 'string' }, steps: { type: 'array', items: { type: 'object' } }, classes: { type: 'array', items: { type: 'object' }, description: '类定义，可省略' } } },
+  { name: 'flow_save', desc: '新建或更新一个 Flow。steps 是步骤数组，每步 {kind, sel:{id,text,desc}, x, y, text, app, pkg, key, forward, ms, optional, confirm, note}。kind 可选 launch/tap/input/enter/scroll/swipe/key/wait/sleep/ai/new/method/if/else/endif/while/endwhile/do/dowhile/for/endfor/break/continue/set/call。逻辑节点：if/while/dowhile 带 cond{kind:exists|not_exists|text|var, sel, text, var, op(==|!=|>|<|>=|<=|contains), value}；set{var, value}，value 支持 ${变量}、四则、拼接、point "0.5,0.3"、struct JSON；for{var, from, to, step?} 含端点；call{flowId, args?} 运行另一个已保存的 Flow（子 Flow，当作一步），args 给子 Flow 的 {参数} 传值，如 {"关键词":"{关键词}"}，不能调用自己或形成循环，最多嵌套 5 层；tap 可用 pointVar 指向 point 变量；变量可用 a.b 读写字段（point 的 x/y、struct、对象）。v0.17：ai{goal, act:tap|long|input, text?} 用 AI 视觉找元素（首跑要一次模型往返，找到的选择器自动存回，之后走原生）；类 classes:[{name, fields:{字段:默认值}, methods:[{name, params?, steps 或 flowId}]}]，new{var, cls, args?} 实例化，method{var, method, args?} 调用，方法里用 this.字段。循环嵌套最多 8 层，单循环默认最多 20 次（步上用 max 覆盖）。会变的内容写成 {参数名}。付款、提交订单、发送这类步骤要设 confirm:true。', params: { id: { type: 'string', description: '更新已有 Flow 时填，可省略' }, app: { type: 'string' }, name: { type: 'string' }, desc: { type: 'string' }, steps: { type: 'array', items: { type: 'object' } }, classes: { type: 'array', items: { type: 'object' }, description: '类定义，可省略' } } },
 ] as const
 
-const uid = () => Math.random().toString(36).slice(2, 10)
 export async function runFlowTool(name: string, args: Record<string, unknown>): Promise<string> {
   try {
     if (name === 'flow_list') return flowSummary(loadFlows())

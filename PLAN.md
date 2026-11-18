@@ -1,5 +1,16 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.22（2026-11-18，分支 v017-flow）
+用户反馈（手机上 Flow 编辑器截图，左边常驻图标栏 新对话 / 技能 / MCP）：去掉常驻图标栏；Flow 继续录制；子 Flow（自定义 / 合并动作）；Inter 不好看换西文字体。这次用户说不用跑测试（没写 e2e_v22，只保证 `npm run build` 通过 + 截图）。
+
+- **侧栏**（App.tsx `useLongPress`、index.css 末尾「v0.22 侧栏」）：回到原来的抽屉：手机默认隐藏，首页左上 / 页面头 / 子页头 / 对话顶栏都有侧栏按钮，单击打开完整侧栏（盖在内容上 + 遮罩，点外面或选完关），桌面默认展开推开内容、单击收起。图标栏只在**长按**侧栏按钮（480 ms，安卓上带震动）后出现，再长按隐藏，存 `localStorage 'lumi.sideRail'`（'1' 显示）；图标栏和完整侧栏里的按钮同样是单击开关抽屉、长按开关图标栏。`.app` 类名：`side-open`（抽屉开）+ `rail-on / rail-off`；`lumi.sideMini` 不再使用。图标栏开着时页面头里的侧栏按钮隐藏（用图标栏顶部那个）。
+- **继续录制**：编辑器步骤下面「添加步骤 / 继续录制」两个按钮；继续录制 = `startRecording({appendTo, at})` → 原生 `recordStart({resume:true})`（LumiFlow：不记打开应用这一步，用启动 Intent 把应用切回前台，悬浮条显示「继续录制 · 新增 N 步」，撤销可撤到 0 步）。回到 App 时 `consumeRecording()`（flow.ts，新建录制和继续录制共用，App.tsx 的 `useRecordReturn` 和编辑器都调它）→ `appendRecorded()` 把新步骤（tidy，去掉重复的打开应用）插到展开那一步后面，没有展开就接在最后，提示「已接上 N 步」。网页版提示「只有安卓 App 里可以录制」。
+- **子 Flow**：沿用已有的 `call` 步（以前只是内联、无参数、3 层），升级为「把另一个已保存的 Flow 当一步」：`{kind:'call', flowId, args?}`，args 给子 Flow 的 `{参数}` 传值（可写 `{外层参数}` / `${变量}`），没传的用外层同名参数（runFlow 展开后再 fill 一次）；最多嵌套 `MAX_SUBFLOW_DEPTH = 5` 层（类方法仍 3 层）。校验：不能调用自己、`subflowGraph` 找循环（报「A → B → A」）、超过 5 层报错、子 Flow 参数没传 / 多传给提示。展开时循环 / 超深保留原 call 步，原生 FlowVm 报错停下（原有行为）。编辑器：时间线上是一步，节点是子 Flow 应用的图标，卡片写子 Flow 名称、应用、步数、传参，玫红色「子 Flow」标签；展开后选 Flow（带图标的列表，会造成循环的灰掉）、「换一个」「打开」、参数表。添加步骤弹窗「子 Flow 与类」组里的「子 Flow」。**合并**：步骤标题右边「多选」，点选连续步骤 →「合并为子 Flow」（起名）→ `extractSubflow()` 新建一个同应用的 Flow（参数自动带上），原位置换成一个 call 步并把参数原样往下传；块（如果 / 循环）没选完整、选了打开应用（不在第一步）、选了方法进出步时不让合并（`canExtract`）。AI：flow_save 工具描述、对话里按任务生成 Flow 的 `CUSTOM_PROMPT` 第 8 条、编辑器「用 AI 优化」提示词都写了 call{flowId, args}，优化时把已有 Flow 列表发给模型。
+- **西文字体**：Inter → **Hanken Grotesk**（OFL，@fontsource-variable 5.3.0 的 latin 可变字重 woff2，34.7 KB，`src/assets/fonts/HankenGrotesk-latin-wght.woff2` + `OFL-HankenGrotesk.txt`）。对比了 Instrument Sans / Hanken Grotesk / Figtree / Geist（`design/v22/font-compare.png`，同一张卡片：编辑 Flow、新的 Flow、用 AI 优化、50% · 12%）：Instrument Sans 字距太紧、数字挤在一起；Figtree 偏圆、几何感和衬线中文不搭；Geist 偏技术感、和 Inter 差不多硬；Hanken Grotesk 是带人文味的 grotesque，字怀开、笔画温和，最接近 Anthropic Sans 的感觉，和 Noto Serif SC 放一起最协调。字体栈 `"Anthropic Sans","Hanken Grotesk","Noto Serif SC",…`（Anthropic Sans 仍只按名字引用不打包）。Inter 文件和许可证已删。
+- **版本**：0.22.0（versionCode 23），设置页页脚 v0.22。
+- **截图**：`python3 scripts/v22_shots.py` → `design/v22/`：home-no-rail / home-drawer / home-rail（长按后）、flow-editor-subflow（+ 展开子 Flow 步、多选合并）、desktop-home（默认展开）/ desktop-home-closed、font-compare，合成 `design/v22/v22_preview.jpg`。脚本里顺带打印了状态：默认无图标栏、单击开抽屉、点遮罩关、长按出图标栏（main left 64px，存 '1'）、再长按隐藏（存 '0'），全部无横向溢出、无页面报错。
+- **没测**：按用户要求没写 / 没跑 Playwright 测试（e2e_v21 里检查 Inter 的 4 项字体断言现在会失败，需要改成 Hanken Grotesk；侧栏相关断言基于旧的常驻图标栏，也要改）；`node scripts/flow-test.mts` 没跑；原生继续录制、子 Flow 真机运行没上真机；Java 只靠 CI 的 Gradle 编译。
+
 ## v0.21（2026-11-18，分支 v017-flow）
 需求：网页版全功能 Playwright 端到端测试并修 bug；字体改成「中文一律衬线、西文 Anthropic Sans」；侧栏长按暂不改（等参考图）；版本 0.21.0、出新 APK。
 

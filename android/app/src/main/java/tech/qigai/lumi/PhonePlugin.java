@@ -104,7 +104,7 @@ public class PhonePlugin extends Plugin {
     @PluginMethod public void flowStop(PluginCall call) { LumiA11yService s = LumiA11yService.instance; if (s != null && s.flow != null) { s.flow.stop = true; s.flow.cancelVision(); } call.resolve(); }
     @PluginMethod public void recordStart(PluginCall call) {
         LumiA11yService s = svc(call); if (s == null) return;
-        s.flow.recordStart(call.getString("pkg", ""), call.getString("app", ""));
+        s.flow.recordStart(call.getString("pkg", ""), call.getString("app", ""), Boolean.TRUE.equals(call.getBoolean("resume", false)));
         call.resolve();
     }
     @PluginMethod public void recordStatus(PluginCall call) {

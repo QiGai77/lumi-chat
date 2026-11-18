@@ -42,6 +42,8 @@ export interface Flow {
 export const MAX_LOOP_DEPTH = 8
 export const DEFAULT_LOOP_MAX = 20
 export const MAX_CALL_DEPTH = 3
+/** v0.22：子 Flow（call 步）最多嵌套 5 层；类方法仍是 MAX_CALL_DEPTH。 */
+export const MAX_SUBFLOW_DEPTH = 5
 export const MAX_EXEC_STEPS = 500
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -184,7 +186,7 @@ export const stepLabel = (s: FlowStep): string => {
     case 'break': return '跳出循环'
     case 'continue': return '继续下一轮'
     case 'set': return `设置 ${s.var || '?'} = ${s.value ?? ''}`
-    case 'call': return `调用子流程 ${s.flowId || ''}`
+    case 'call': return `运行子 Flow ${s.flowId || ''}${s.args && Object.keys(s.args).length ? `（${argsText(s.args)}）` : ''}`
     case 'new': return `新建 ${s.var || '?'} = ${s.cls || '?'}(${argsText(s.args)})`
     case 'method': return `调用 ${s.var || '?'}.${s.method || '?'}(${argsText(s.args)})`
     case 'bind': return `进入 ${s.var || ''}.${s.method || ''}()`
@@ -217,6 +219,34 @@ const classesWithMethod = (m: string, all: Flow[], own?: Flow) => {
   const seen = new Set<string>()
   for (const f of own ? [own, ...all] : all) for (const c of f.classes || []) if (!seen.has(c.name) && c.methods.some(x => x.name === m)) { seen.add(c.name); out.push({ cls: c, owner: f }) }
   return out
+}
+
+/** 子 Flow 调用图：从 start 往下走 call 步，返回最深层数（start 自己算 1）和第一条循环路径。selfId 是调用方（也算进路径）。 */
+export function subflowGraph(start: Flow, all: Flow[], selfId?: string): { depth: number; cycle?: string[] } {
+  const name = (id: string) => all.find(f => f.id === id)?.name || id
+  let cycle: string[] | undefined
+  const walk = (f: Flow, path: string[]): number => {
+    if (cycle) return 0
+    if (path.includes(f.id)) { cycle = [...path.slice(path.indexOf(f.id)), f.id].map(name); return 0 }
+    let d = 0
+    for (const s of f.steps) if (s.kind === 'call' && s.flowId) {
+      const t = all.find(x => x.id === s.flowId || x.name === s.flowId)
+      if (t) d = Math.max(d, walk(t, [...path, f.id]))
+      if (path.length > 20) break
+    }
+    return d + 1
+  }
+  const depth = walk(start, selfId ? [selfId] : [])
+  return { depth, cycle }
+}
+/** 合并：选中的一段连续步骤能不能单独成为一个子 Flow（块要配对、break/continue 要有循环）。返回错误文字，能合并返回 ''。 */
+export function canExtract(steps: FlowStep[], from: number, to: number): string {
+  if (from < 0 || to >= steps.length || from > to) return '先选连续的步骤'
+  const part = steps.slice(from, to + 1)
+  if (part.some(s => s.kind === 'launch') && from > 0) return '打开应用的步骤不能合并进子 Flow'
+  if (part.some(s => s.kind === 'bind' || s.kind === 'unbind')) return '不能合并方法进出步'
+  const e = validateFlow(part).filter(x => x.startsWith('错误') && /没有对应|不在任何循环|只能有一个/.test(x))
+  return e.length ? '选中的步骤里块没有配对完整（如果 / 循环要连同结束步一起选）' : ''
 }
 
 export interface ValidateOpts { own?: Flow; inMethod?: boolean; params?: string[] }
@@ -327,8 +357,19 @@ export function validateFlow(steps: FlowStep[], all?: Flow[], initialVars?: Reco
         break
       }
       case 'call': {
+        const own = opts.own
+        const target = all?.find(f => f.id === s.flowId || f.name === s.flowId)
         if (!s.flowId) errs.push(`错误：第 ${at} 步没选要调用的 Flow`)
-        else if (all && !all.some(f => f.id === s.flowId || f.name === s.flowId)) errs.push(`错误：第 ${at} 步调用的 Flow「${s.flowId}」不存在`)
+        else if (own && (s.flowId === own.id || s.flowId === own.name)) errs.push(`错误：第 ${at} 步不能调用自己`)
+        else if (all && !target) errs.push(`错误：第 ${at} 步调用的 Flow「${s.flowId}」不存在`)
+        else if (all && target) {
+          const g = subflowGraph(target, all, own?.id)
+          if (g.cycle) errs.push(`错误：第 ${at} 步的子 Flow 会循环调用（${g.cycle.join(' → ')}）`)
+          else if (g.depth > MAX_SUBFLOW_DEPTH) errs.push(`错误：第 ${at} 步的子 Flow 嵌套 ${g.depth} 层，超过 ${MAX_SUBFLOW_DEPTH} 层上限`)
+          for (const k of target.params || []) if (!(s.args && k in s.args)) warn.push(`警告：第 ${at} 步没给子 Flow 的参数 {${k}} 传值，运行时用同名参数`)
+          for (const k of Object.keys(s.args || {})) if (!(target.params || []).includes(k)) warn.push(`警告：第 ${at} 步给了子 Flow 没有的参数 ${k}`)
+        }
+        for (const v of Object.values(s.args || {})) checkExpr(v, at)
         break
       }
       case 'new': {
@@ -436,10 +477,12 @@ export function expandCalls(steps: FlowStep[], all: Flow[], depth = 0, chain: st
       continue
     }
     if (s.kind !== 'call' || !s.flowId) { out.push(s); continue }
-    if (depth >= MAX_CALL_DEPTH || chain.includes(s.flowId)) { out.push(s); continue }
     const target = all.find(f => f.id === s.flowId || f.name === s.flowId)
-    if (!target) { out.push(s); continue }
-    out.push(...expandCalls(tag(target.steps, target.id), all, depth + 1, [...chain, s.flowId], { own: target, varClass }))
+    // v0.22：子 Flow 最多 5 层；自己调自己 / 循环调用保留原步，原生报错停下
+    if (!target || depth >= MAX_SUBFLOW_DEPTH || chain.includes(target.id) || target.id === ctx.own?.id && depth === 0) { out.push(s); continue }
+    // 参数传递：call.args 填进子 Flow 的 {参数}；没传的留给外层同名参数（runFlow 展开后再 fill 一次）
+    const body = s.args && Object.keys(s.args).length ? fill(target.steps, s.args) : target.steps
+    out.push(...expandCalls(tag(body, target.id), all, depth + 1, [...chain, ...(depth === 0 && ctx.own ? [ctx.own.id] : []), target.id], { own: target, varClass }))
   }
   return out
 }

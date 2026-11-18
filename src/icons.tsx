@@ -1,4 +1,8 @@
 const P: Record<string, string> = {
+  layers: '<path stroke-linejoin="round" d="M12 3.5l8.5 4.3-8.5 4.3-8.5-4.3z"/><path stroke-linejoin="round" d="M3.5 12l8.5 4.3 8.5-4.3M3.5 16.2l8.5 4.3 8.5-4.3"/>',
+  merge: '<path d="M6 4v4.5c0 2 1.5 3.5 3.5 3.5h5c2 0 3.5 1.5 3.5 3.5V20"/><path d="M18 4v4.5c0 2-1.5 3.5-3.5 3.5"/><path d="M15.5 17.5L18 20l2.5-2.5"/>',
+  checks: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.2l2.8 2.8 5.2-5.6"/>',
+  rec: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/>',
   phone: '<rect x="6" y="2.8" width="12" height="18.4" rx="3.2"/><path d="M10.5 18h3"/>',
   download: '<path d="M12 3.8v11.7M7.8 11.3l4.2 4.2 4.2-4.2"/><path d="M20.5 15v1.8c0 2.3-1.6 3.7-4 3.7H7.5c-2.4 0-4-1.4-4-3.7V15"/>',
   monitor: '<rect x="2.8" y="4" width="18.4" height="12.6" rx="2.6"/><path d="M8.5 20.2h7M12 16.6v3.6"/>',

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { GlassIcon, Icon } from './icons'
 import { streamChat, type Settings } from './api'
 import { meshVars, tint, useAppLook } from './appicon'
-import { blockDepths, checkFlow, findClass, loadFlows, paramsIn, runFlow, runSummary, saveFlows, stepLabel, tidy, upsertFlow,
+import { blockDepths, canExtract, checkFlow, consumeRecording, extractSubflow, findClass, flowSummary, loadFlows, paramsIn, runFlow, runSummary, saveFlows, startRecording, stepLabel, subflowGraph, tidy, upsertFlow,
   type CondOp, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type TraceItem } from './flow'
 
 export function useFlows() {
@@ -19,10 +19,10 @@ export function AppIcon({ app, pkg, s = 48 }: { app: string; pkg?: string; s?: n
 }
 
 /* ---------- 节点分类：图标与颜色 */
-type Cat = 'act' | 'logic' | 'var' | 'cls' | 'ai'
+type Cat = 'act' | 'logic' | 'var' | 'cls' | 'ai' | 'sub'
 const CAT_OF: Partial<Record<FlowStep['kind'], Cat>> = {
   if: 'logic', else: 'logic', endif: 'logic', while: 'logic', endwhile: 'logic', do: 'logic', dowhile: 'logic', for: 'logic', endfor: 'logic',
-  break: 'logic', continue: 'logic', call: 'logic', set: 'var', new: 'cls', method: 'cls', bind: 'cls', unbind: 'cls', ai: 'ai',
+  break: 'logic', continue: 'logic', call: 'sub', set: 'var', new: 'cls', method: 'cls', bind: 'cls', unbind: 'cls', ai: 'ai',
 }
 const catOf = (k: FlowStep['kind']): Cat => CAT_OF[k] || 'act'
 const CAT_COLOR: Record<Exclude<Cat, 'act'>, { solid: string; soft: string }> = {
@@ -30,11 +30,12 @@ const CAT_COLOR: Record<Exclude<Cat, 'act'>, { solid: string; soft: string }> = 
   var: { solid: '#2563C9', soft: '#E3EEFF' },
   cls: { solid: '#0E7A66', soft: '#DDF3EE' },
   ai: { solid: '#A2550A', soft: '#FFF0D6' },
+  sub: { solid: '#B23A62', soft: '#FFE6EE' },
 }
 const kindIcon: Record<string, string> = {
   tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', ai: 'eye',
   if: 'branch', else: 'branch', endif: 'check', while: 'repeat', endwhile: 'check', do: 'repeat', dowhile: 'repeat', for: 'repeat', endfor: 'check',
-  set: 'braces', call: 'bolt', break: 'exit', continue: 'right', new: 'cube', method: 'method',
+  set: 'braces', call: 'layers', break: 'exit', continue: 'right', new: 'cube', method: 'method',
 }
 const isPointSet = (s: FlowStep) => s.kind === 'set' && /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(s.value || '')
 const stepIcon = (s: FlowStep) => isPointSet(s) ? 'target' : kindIcon[s.kind] || 'bolt'
@@ -71,10 +72,11 @@ const ADD_GROUPS: { title: string; items: AddItem[] }[] = [
     { label: '结构体 struct', sub: '多个字段一起存', icon: 'braces', cat: 'var', make: () => [{ kind: 'set', var: 'info', value: '{"name":"","count":0}' }] },
     { label: '改字段', sub: 'obj.field = …', icon: 'braces', cat: 'var', make: () => [{ kind: 'set', var: 'info.count', value: 'info.count + 1' }] },
   ] },
-  { title: '类与子流程', items: [
+  { title: '子 Flow 与类', items: [
+    { label: '子 Flow', sub: '把另一个 Flow 当一步', icon: 'layers', cat: 'sub', make: () => [{ kind: 'call', flowId: '' }] },
     { label: '新建对象', sub: 'new 类', icon: 'cube', cat: 'cls', make: ({ classes }) => [{ kind: 'new', var: classes[0] ? classes[0].name.toLowerCase().slice(0, 1) + 'obj' : 'obj', cls: classes[0]?.name || '' }] },
     { label: '调用方法', sub: 'obj.method()', icon: 'method', cat: 'cls', make: ({ classes }) => [{ kind: 'method', var: classes[0] ? classes[0].name.toLowerCase().slice(0, 1) + 'obj' : 'obj', method: classes[0]?.methods[0]?.name || '' }] },
-    { label: '调用子流程', sub: '跑另一个 Flow', icon: 'bolt', cat: 'logic', make: ({ flows }) => [{ kind: 'call', flowId: flows[0]?.id || '' }] },
+
   ] },
 ]
 const catStyle = (c: Cat, look: { solid: string; soft: string; ink?: string }) => c === 'act' ? { solid: look.ink || look.solid, soft: look.soft } : CAT_COLOR[c]
@@ -163,8 +165,7 @@ function StepEditor({ s, set, f, flows, varClass }: { s: FlowStep; set: (s: Flow
       <Field label="值"><input className="inp mono" value={s.value ?? ''} onChange={e => set({ ...s, value: e.target.value })} placeholder="3、'文字' + n、0.5,0.3、{&quot;k&quot;:1}、p.x + 0.1" /></Field>
       <div className="t12">数字和四则；'文字' + 变量 拼接；0.5,0.3 是坐标点；{'{…}'} 是结构体；a.b 读写字段</div>
     </>
-    case 'call': return <Field label="子流程"><select className="inp sel" value={s.flowId || ''} onChange={e => set({ ...s, flowId: e.target.value })}>
-      <option value="">选择一个 Flow</option>{flows.filter(x => x.id !== f.id).map(x => <option key={x.id} value={x.id}>{x.app} · {x.name}</option>)}</select></Field>
+    case 'call': return <SubflowEditor s={s} set={set} f={f} flows={flows} />
     case 'new': { const c = classOf(); return <>
       <div className="row2"><Field label="变量"><input className="inp mono" value={s.var || ''} onChange={e => set({ ...s, var: e.target.value.trim() })} /></Field>
         <Field label="类"><select className="inp sel" value={s.cls || ''} onChange={e => set({ ...s, cls: e.target.value, args: undefined })}>
@@ -179,6 +180,29 @@ function StepEditor({ s, set, f, flows, varClass }: { s: FlowStep; set: (s: Flow
     </> }
     default: return null
   }
+}
+/* ---------- 子 Flow：选一个已保存的 Flow（会造成循环的灰掉），给它的参数传值 */
+function SubflowEditor({ s, set, f, flows }: { s: FlowStep; set: (s: FlowStep) => void; f: Flow; flows: Flow[] }) {
+  const t = flows.find(x => x.id === s.flowId || x.name === s.flowId)
+  const [pick, setPick] = useState(!t)
+  const bad = (x: Flow) => x.id === f.id ? '就是这个 Flow' : subflowGraph(x, flows, f.id).cycle ? '会循环调用' : ''
+  return <>
+    {t && !pick ? <div className="sub-pick on">
+      <AppIcon app={t.app} pkg={t.pkg} s={36} />
+      <span className="grow" style={{ minWidth: 0 }}><b className="ell">{t.name}</b><span className="t12 ell">{t.app} · {t.steps.length} 步{t.params.length ? ` · 参数 ${t.params.join('、')}` : ''}</span></span>
+      <button className="chip-t" onClick={() => setPick(true)}>换一个</button>
+      <button className="chip-t" onClick={() => window.dispatchEvent(new CustomEvent('lumi-go', { detail: `flow:${t.id}` }))}>打开</button>
+    </div> : <div className="sub-list">
+      <div className="t12">选要当作一步运行的 Flow</div>
+      {flows.filter(x => x.id !== f.id).map(x => { const why = bad(x); return (
+        <button key={x.id} className={`sub-pick press ${x.id === s.flowId ? 'on' : ''}`} disabled={!!why} onClick={() => { set({ ...s, flowId: x.id, args: x.params.length ? Object.fromEntries(x.params.map(p => [p, s.args?.[p] ?? (f.params.includes(p) ? `{${p}}` : '')]).filter(([, v]) => v)) : undefined }); setPick(false) }}>
+          <AppIcon app={x.app} pkg={x.pkg} s={32} />
+          <span className="grow" style={{ minWidth: 0 }}><b className="ell">{x.name}</b><span className="t12 ell">{why || `${x.app} · ${x.steps.length} 步`}</span></span>
+        </button>) })}
+      {flows.length <= 1 && <div className="t13">还没有别的 Flow 可以调用</div>}
+    </div>}
+    {t && t.params.length > 0 && <><div className="t12">传给子 Flow 的参数（可写 {'{参数}'} 或 ${'{变量}'}，留空用同名参数）</div><ArgsEditor names={t.params} args={s.args} set={a => set({ ...s, args: a })} /></>}
+  </>
 }
 const numOr = (v: string): number | string => { const t = v.trim(); return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : t }
 const allClasses = (flows: Flow[], f: Flow) => [...new Set([...(f.classes || []), ...flows.flatMap(x => x.classes || [])].map(c => c.name))]
@@ -270,6 +294,22 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
   const [ai, setAi] = useState(''), [aiBusy, setAiBusy] = useState(false), [draft, setDraft] = useState<Flow | null>(null)
   const [msg, setMsg] = useState('')
   const [res, setRes] = useState<RunResult | null>(null)
+  const [sel, setSel] = useState<number[] | null>(null)
+  // v0.22 继续录制：回到 App 时把新录的步骤接进这个 Flow
+  useEffect(() => {
+    const vis = async () => {
+      if (document.hidden) return
+      try {
+        const r = await consumeRecording(); if (!r) return
+        if ('error' in r) { setMsg(r.error); return }
+        const fresh = loadFlows().find(x => x.id === r.id)
+        if (r.id === id && fresh) { setF(fresh); setMsg(`已接上 ${r.added} 步`) }
+        else window.dispatchEvent(new CustomEvent('lumi-go', { detail: `flow:${r.id}` }))
+      } catch (e) { setMsg((e as Error).message) }
+    }
+    document.addEventListener('visibilitychange', vis); vis()
+    return () => document.removeEventListener('visibilitychange', vis)
+  }, [id])
   const look = useAppLook(f?.app || '', f?.pkg)
   const t = tint(look)
   const S = draft || f
@@ -281,6 +321,23 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
   const setStep = (i: number, s: FlowStep) => put({ ...f, steps: f.steps.map((x, j) => j === i ? s : x) })
   const move = (i: number, d: number) => { const a = [...f.steps]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; put({ ...f, steps: a }); setOpen(j) }
   const insert = (ss: FlowStep[]) => { const at = open != null ? open + 1 : f.steps.length; const a = [...f.steps]; a.splice(at, 0, ...ss); put({ ...f, steps: a }); setAdd(false); setOpen(at) }
+  const resume = async () => {
+    const at = open != null ? open + 1 : f.steps.length
+    try {
+      const why = await startRecording({ app: f.app, pkg: f.pkg || f.steps.find(x => x.pkg)?.pkg || '', appendTo: f.id, at })
+      setMsg(why || `继续录制中，新步骤会接在第 ${at} 步后面。录完点悬浮条上的「完成」`)
+    } catch (e) { setMsg((e as Error).message) }
+  }
+  const selRange = sel && sel.length ? [Math.min(...sel), Math.max(...sel)] as const : null
+  const contiguous = !!sel && !!selRange && sel.length === selRange[1] - selRange[0] + 1
+  const selWhy = !sel || !sel.length ? '点选要合并的连续步骤' : !contiguous ? '只能合并连续的步骤' : sel.length < 2 ? '至少选 2 步' : canExtract(f.steps, selRange![0], selRange![1])
+  const merge = () => {
+    if (!selRange || selWhy) return
+    const name = prompt('子 Flow 的名字', `${f.name} · 子流程`); if (name == null) return
+    const r = extractSubflow(f, selRange[0], selRange[1], name.trim() || undefined)
+    if ('error' in r) { setMsg(r.error); return }
+    setF(r.parent); setSel(null); setOpen(selRange[0]); setMsg(`已合并成子 Flow「${r.child.name}」（${r.child.steps.length} 步）`)
+  }
   const optimize = async () => {
     setAiBusy(true); setDraft(null); setMsg('')
     let out = ''
@@ -293,12 +350,13 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
 - 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
 - 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
 - 付款、提交订单、发送、删除这类步骤加 confirm:true
+- 已有的 call 步（{"kind":"call","flowId","args"} 运行另一个已保存的 Flow，当作一步）保持不变；可以用 call 调用下面列出的已有 Flow 代替一段重复步骤，args 给子 Flow 的 {参数} 传值；不能调用自己或形成循环
 - 允许用 if/else/while/do-while/for/set/call 等逻辑节点代替重复步骤；循环必须有明确退出条件（cond 或 for 的 from/to），while/do-while 默认最多 20 次
 - 选择器明显不稳定（比如只有坐标、文字会变）的点击，可以换成 {"kind":"ai","goal":"简短描述","act":"tap"}，或在 tap 上加 "vision":true；不要把稳定的选择器换成 ai
 - 已有的 new / method 类调用保持不变
 - 禁止编造不存在的选择器；只用录制/屏幕上真实出现的 id、文字或坐标
 - 每步可以写一个简短中文 note 说明`,
-        messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}` }],
+        messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}\n可调用的已有 Flow：\n${flowSummary(flows.filter(x => x.id !== f.id))}` }],
         onDelta: x => { out = x } })
       const j = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1))
       if (!Array.isArray(j.steps) || !j.steps.length) throw new Error('模型没有给出步骤')
@@ -345,13 +403,17 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
         {errs.length + warns.length > 6 && <div className="t12">还有 {errs.length + warns.length - 6} 条</div>}
       </div>}
 
-      <div className="sec">{draft ? '优化后的步骤（预览）' : `步骤 · ${f.steps.length}`}</div>
-      <ol className="flow-steps tl">{S.steps.map((s, i) => { const c = catStyle(catOf(s.kind), t); const closing = /^end|^dowhile$|^else$/.test(s.kind); return (
-        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''} ${closing ? 'closing' : ''}`} style={{ ['--tc' as string]: c.solid, ['--ts' as string]: c.soft, ['--d' as string]: depths[i] }}>
-          <span className="tl-node">{s.kind === 'launch' ? <AppIcon app={f.app} pkg={f.pkg} s={30} /> : <Icon n={stepIcon(s)} s={16} w={2} />}</span>
+      <div className="sec sec-row"><span className="grow">{draft ? '优化后的步骤（预览）' : sel ? `选择要合并的步骤 · 已选 ${sel.length}` : `步骤 · ${f.steps.length}`}</span>
+        {!draft && f.steps.length > 1 && <button className={`chip-t ${sel ? 'on' : ''}`} onClick={() => { setSel(sel ? null : []); setOpen(null) }}><Icon n="checks" s={13} w={2.2} />{sel ? '取消多选' : '多选'}</button>}</div>
+      <ol className={`flow-steps tl ${sel ? 'selecting' : ''}`}>{S.steps.map((s, i) => { const c = catStyle(catOf(s.kind), t); const closing = /^end|^dowhile$|^else$/.test(s.kind); const child = s.kind === 'call' ? flows.find(x => x.id === s.flowId || x.name === s.flowId) : undefined; const picked = !!sel?.includes(i); return (
+        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''} ${closing ? 'closing' : ''} ${picked ? 'picked' : ''} ${s.kind === 'call' ? 'is-sub' : ''}`} style={{ ['--tc' as string]: c.solid, ['--ts' as string]: c.soft, ['--d' as string]: depths[i] }}>
+          <span className="tl-node">{s.kind === 'launch' ? <AppIcon app={f.app} pkg={f.pkg} s={30} /> : child ? <AppIcon app={child.app} pkg={child.pkg} s={30} /> : <Icon n={stepIcon(s)} s={16} w={2} />}</span>
           <div className="tl-card">
-            <button className="fs-head" onClick={() => !draft && setOpen(open === i ? null : i)}>
-              <span className="grow ell">{stepLabel(s)}</span>
+            <button className="fs-head" onClick={() => { if (draft) return; if (sel) { setSel(picked ? sel.filter(x => x !== i) : [...sel, i]); return } setOpen(open === i ? null : i) }}>
+              {sel && <span className={`sel-box ${picked ? 'on' : ''}`}>{picked && <Icon n="check" s={12} w={3} />}</span>}
+              {child ? <span className="grow sub-lb"><span className="ell"><b>{child.name}</b></span><span className="t12 ell">子 Flow · {child.app} · {child.steps.length} 步{s.args && Object.keys(s.args).length ? ' · ' + Object.entries(s.args).map(([k, v]) => `${k}=${v}`).join('，') : ''}</span></span>
+                : <span className="grow ell">{s.kind === 'call' && !s.note ? (s.flowId ? `子 Flow「${s.flowId}」不存在` : '子 Flow：选一个 Flow') : stepLabel(s)}</span>}
+              {s.kind === 'call' && <span className="fs-tag sub">子 Flow</span>}
               {s.kind === 'ai' && <span className={`fs-tag ${s.sel ? 'ok' : 'ai'}`}>{s.sel ? '已缓存' : 'AI'}</span>}
               {s.vision && <span className="fs-tag ai">AI 兜底</span>}
               {s.optional && <span className="fs-tag">可选</span>}{s.confirm && <span className="fs-tag warn">确认</span>}
@@ -370,7 +432,14 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
           </div>
         </li>) })}</ol>
       {!draft && <>
-        <button className="add-btn press" onClick={() => setAdd(true)}><Icon n="plus" s={18} w={2} />添加步骤{open != null ? `（第 ${open + 1} 步后）` : ''}</button>
+        {sel ? <div className="merge-bar">
+          <span className="grow t13">{selWhy || `第 ${selRange![0] + 1}–${selRange![1] + 1} 步合并成一个子 Flow，这里换成一步调用`}</span>
+          <button className="btn-ink" disabled={!!selWhy} onClick={merge}><Icon n="merge" s={15} w={2.2} />合并为子 Flow</button>
+        </div> : <div className="add-row">
+          <button className="add-btn press" onClick={() => setAdd(true)}><Icon n="plus" s={18} w={2} />添加步骤</button>
+          <button className="add-btn rec press" onClick={resume}><Icon n="rec" s={17} w={2} />继续录制</button>
+        </div>}
+        {!sel && <div className="t12 add-hint">{open != null ? `新步骤接在第 ${open + 1} 步后面` : '新步骤接在最后；先点开某一步可以插在它后面'}</div>}
 
         <div className="sec">类 · {(f.classes || []).length}</div>
         <div className="cls-list">
