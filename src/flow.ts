@@ -73,10 +73,18 @@ export function extractSubflow(fl: Flow, from: number, to: number, name?: string
   return { parent, child }
 }
 
-export interface TraceItem { pc: number; i?: number; fid?: string; label: string; ms: number; src: 'native' | 'cache' | 'vision' | 'coord' | 'logic' | 'skip' | 'fail' }
+export interface TraceItem {
+  pc: number; i?: number; fid?: string; label: string; ms: number; src: 'native' | 'cache' | 'vision' | 'coord' | 'ocr' | 'logic' | 'skip' | 'fail'
+  /** v0.23 耗时拆分（毫秒）：查找 / 动作 / 等页面（look-ahead 或安静窗）/ AI 视觉 / 端侧 OCR */
+  lk?: number; ac?: number; wt?: number; vs?: number; oc?: number
+  /** v0.23 命中的是哪一层：ahead（上一步等页面时已找到）/ id / text / walk / bounds（缓存坐标）/ focus / edit / coord / ocr / vision / launch，重试时带 +retry */
+  tier?: string
+}
 export interface RunResult {
   ok: boolean; done: number; total: number; failedAt?: number; reason?: string; screen?: string; log?: string[]; ms?: number; stepMs?: number[]
   trace?: TraceItem[]; learned?: Learned[]; visionMs?: number; visionCalls?: number; vars?: Record<string, VarValue>
+  /** v0.23：失败时的截图（长边 480px JPEG base64）、OCR 调用次数、引擎版本 */
+  shot?: string; ocrCalls?: number; engine?: string
   /** 写回了几个 AI 学到的选择器；JS 侧每次模型调用的耗时 */
   saved?: number; modelMs?: number[]
 }
@@ -103,7 +111,8 @@ export async function runFlow(fl: Flow, vals: Record<string, string> = {}): Prom
     } catch (e) { await Phone.flowVisionAnswer({ id: d.id, error: (e as Error).message || String(e) }).catch(() => {}) }
   }).catch(() => null)
   let r: RunResult
-  try { r = await Phone.flowRun({ name: fl.name, steps, fast: fl.fast ?? true, vars: fl.vars || {} }) as unknown as RunResult }
+  const pkg = fl.pkg || fl.steps.find(x => x.kind === 'launch' && x.pkg)?.pkg || ''
+  try { r = await Phone.flowRun({ name: fl.name, steps, fast: fl.fast ?? true, vars: fl.vars || {}, pkg }) as unknown as RunResult }
   finally { sub?.remove() }
   r.modelMs = modelMs
   const now = loadFlows()
@@ -111,14 +120,34 @@ export async function runFlow(fl: Flow, vals: Record<string, string> = {}): Prom
   const i = now.findIndex(x => x.id === fl.id)
   if (i >= 0) now[i] = { ...now[i], runs: now[i].runs + 1, lastOk: r.ok, lastMs: r.ms }
   saveFlows(now)
+  saveRun(fl, r)
   return r
+}
+
+/* ---------- v0.23 最近运行：保留最近 12 次的明细（每步耗时拆分），方便截图对比；只有最近一次带失败截图 */
+const RUNS = 'lumi.flowRuns'
+export interface SavedRun { flowId: string; name: string; app: string; at: number; r: RunResult }
+export const loadRuns = (): SavedRun[] => { try { return JSON.parse(localStorage.getItem(RUNS) || '[]') } catch { return [] } }
+export function saveRun(fl: Flow, r: RunResult) {
+  const slim: RunResult = { ok: r.ok, done: r.done, total: r.total, failedAt: r.failedAt, reason: r.reason, ms: r.ms, trace: r.trace, visionMs: r.visionMs, visionCalls: r.visionCalls, ocrCalls: r.ocrCalls, saved: r.saved, modelMs: r.modelMs, engine: r.engine, shot: r.shot }
+  const old = loadRuns().map(x => ({ ...x, r: { ...x.r, shot: undefined } }))
+  const all = [{ flowId: fl.id, name: fl.name, app: fl.app, at: Date.now(), r: slim }, ...old].slice(0, 12)
+  try { localStorage.setItem(RUNS, JSON.stringify(all)) } catch { try { localStorage.setItem(RUNS, JSON.stringify(all.map(x => ({ ...x, r: { ...x.r, shot: undefined } })).slice(0, 6))) } catch { /* 存不下就算了 */ } }
+  window.dispatchEvent(new Event('lumi-flowruns'))
+}
+
+/** 原生步（不含视觉 / 失败 / 跳过）的平均耗时拆分。 */
+export function runSplit(t: TraceItem[]) {
+  const xs = t.filter(x => x.src !== 'logic' && x.src !== 'vision' && x.src !== 'fail' && x.src !== 'skip')
+  const avg = (k: 'ms' | 'lk' | 'ac' | 'wt') => xs.length ? Math.round(xs.reduce((a, x) => a + (x[k] || 0), 0) / xs.length) : 0
+  return { n: xs.length, ms: avg('ms'), lk: avg('lk'), ac: avg('ac'), wt: avg('wt') }
 }
 
 /** 结果一句话：「完成，5 步 · 2.3 秒 · 原生 4 · 视觉 1」。 */
 export function runSummary(r: RunResult, name?: string): string {
   const t = r.trace || []
   const n = (k: string) => t.filter(x => x.src === k).length
-  const parts = [r.ms != null ? `${(r.ms / 1000).toFixed(1)} 秒` : '', n('native') + n('coord') ? `原生 ${n('native') + n('coord')}` : '', n('cache') ? `缓存 ${n('cache')}` : '', n('vision') ? `视觉 ${n('vision')}` : ''].filter(Boolean)
+  const parts = [r.ms != null ? `${(r.ms / 1000).toFixed(1)} 秒` : '', n('native') + n('coord') ? `原生 ${n('native') + n('coord')}` : '', n('cache') ? `缓存 ${n('cache')}` : '', n('ocr') ? `文字识别 ${n('ocr')}` : '', n('vision') ? `视觉 ${n('vision')}` : ''].filter(Boolean)
   const head = name ? `「${name}」` : ''
   if (r.ok) return `${head}完成，${r.done} 步${parts.length ? ' · ' + parts.join(' · ') : ''}${r.saved ? ` · 已把 ${r.saved} 个 AI 找到的位置存回，下次走原生` : ''}`
   return `${head}卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`
@@ -131,7 +160,7 @@ export const flowSummary = (f: Flow[]) => f.length
 export const FLOW_TOOLS = [
   { name: 'flow_list', desc: '列出用户保存的 Flow（按应用分组的固定操作流程）。', params: {} },
   { name: 'flow_run', desc: '运行一个 Flow，比运行逐步操作快很多。params 填 Flow 需要的参数。失败会返回卡住的步骤和当时的屏幕，你可以接着手动完成。', params: { id: { type: 'string' }, params: { type: 'object', description: '参数，比如 {"关键词":"露营"}，可省略' } } },
-  { name: 'flow_save', desc: '新建或更新一个 Flow。steps 是步骤数组，每步 {kind, sel:{id,text,desc}, x, y, text, app, pkg, key, forward, ms, optional, confirm, note}。kind 可选 launch/tap/input/enter/scroll/swipe/key/wait/sleep/ai/new/method/if/else/endif/while/endwhile/do/dowhile/for/endfor/break/continue/set/call。逻辑节点：if/while/dowhile 带 cond{kind:exists|not_exists|text|var, sel, text, var, op(==|!=|>|<|>=|<=|contains), value}；set{var, value}，value 支持 ${变量}、四则、拼接、point "0.5,0.3"、struct JSON；for{var, from, to, step?} 含端点；call{flowId, args?} 运行另一个已保存的 Flow（子 Flow，当作一步），args 给子 Flow 的 {参数} 传值，如 {"关键词":"{关键词}"}，不能调用自己或形成循环，最多嵌套 5 层；tap 可用 pointVar 指向 point 变量；变量可用 a.b 读写字段（point 的 x/y、struct、对象）。v0.17：ai{goal, act:tap|long|input, text?} 用 AI 视觉找元素（首跑要一次模型往返，找到的选择器自动存回，之后走原生）；类 classes:[{name, fields:{字段:默认值}, methods:[{name, params?, steps 或 flowId}]}]，new{var, cls, args?} 实例化，method{var, method, args?} 调用，方法里用 this.字段。循环嵌套最多 8 层，单循环默认最多 20 次（步上用 max 覆盖）。会变的内容写成 {参数名}。付款、提交订单、发送这类步骤要设 confirm:true。', params: { id: { type: 'string', description: '更新已有 Flow 时填，可省略' }, app: { type: 'string' }, name: { type: 'string' }, desc: { type: 'string' }, steps: { type: 'array', items: { type: 'object' } }, classes: { type: 'array', items: { type: 'object' }, description: '类定义，可省略' } } },
+  { name: 'flow_save', desc: '新建或更新一个 Flow。steps 是步骤数组，每步 {kind, sel:{id,text,desc}, x, y, text, app, pkg, key, forward, ms, optional, confirm, note}。kind 可选 launch/tap/input/enter/scroll/swipe/key/wait/sleep/ai/new/method/if/else/endif/while/endwhile/do/dowhile/for/endfor/break/continue/set/call。逻辑节点：if/while/dowhile 带 cond{kind:exists|not_exists|text|var, sel, text, var, op(==|!=|>|<|>=|<=|contains), value}；set{var, value}，value 支持 ${变量}、四则、拼接、point "0.5,0.3"、struct JSON；for{var, from, to, step?} 含端点；call{flowId, args?} 运行另一个已保存的 Flow（子 Flow，当作一步），args 给子 Flow 的 {参数} 传值，如 {"关键词":"{关键词}"}，不能调用自己或形成循环，最多嵌套 5 层；tap 可用 pointVar 指向 point 变量；变量可用 a.b 读写字段（point 的 x/y、struct、对象）。v0.17：ai{goal, act:tap|long|input, text?} 用 AI 视觉找元素（首跑要一次模型往返，找到的选择器自动存回，之后走原生）；类 classes:[{name, fields:{字段:默认值}, methods:[{name, params?, steps 或 flowId}]}]，new{var, cls, args?} 实例化，method{var, method, args?} 调用，方法里用 this.字段。循环嵌套最多 8 层，单循环默认最多 20 次（步上用 max 覆盖）。会变的内容写成 {参数名}。付款、提交订单、发送这类步骤要设 confirm:true。不要为了等页面加载写 wait / sleep：运行器每步会自动等到下一步的目标出现就继续；wait 只用来等一个具体文字出现，sel 不能为空。', params: { id: { type: 'string', description: '更新已有 Flow 时填，可省略' }, app: { type: 'string' }, name: { type: 'string' }, desc: { type: 'string' }, steps: { type: 'array', items: { type: 'object' } }, classes: { type: 'array', items: { type: 'object' }, description: '类定义，可省略' } } },
 ] as const
 
 export async function runFlowTool(name: string, args: Record<string, unknown>): Promise<string> {

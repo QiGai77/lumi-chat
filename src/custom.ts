@@ -64,10 +64,10 @@ export const CUSTOM_PROMPT = `你可以在对话里替用户定制栖语：
 1. 第一步 launch 打开应用（app 写应用名；知道包名就写 pkg，比如小红书 com.xingin.xhs、微信 com.tencent.mm、淘宝 com.taobao.taobao、美团 com.sankuai.meituan、抖音 com.ss.android.ugc.aweme、支付宝 com.eg.android.AlipayGphone、大众点评 com.dianping.v1、京东 com.jingdong.app.mall、哔哩哔哩 tv.danmaku.bili）。
 2. 只在确定时写原生选择器 sel（用户已有 Flow 里出现过的，或刚才 phone_screen 看到的）。不确定的界面一律用 AI 视觉步：{"kind":"ai","goal":"顶部的搜索框","act":"tap"}，输入用 {"kind":"ai","goal":"搜索输入框","act":"input","text":"{关键词}"}；goal 写清位置和外观。ai 步运行时先试缓存的选择器，没有才截图交给模型找，找到后选择器自动存回 Flow，下次走原生。
 3. 会变的内容写成 {参数}（比如 {关键词}、{数量}）。重复的事用 for：{"kind":"for","var":"i","from":1,"to":"{数量}"} … {"kind":"endfor"}；循环里每次目标不同可以写「第 \${i} 篇笔记」，但这种步每次都要走 AI 视觉、不会缓存，能用固定目标（比如「列表里第一篇笔记」+ 返回 + 滚动）就用固定目标。
-4. 用 if + exists / not_exists 处理弹窗、广告、未登录（比如出现「跳过」就点掉，或给 tap 加 optional:true）；等页面加载用 wait。
+4. 用 if + exists / not_exists 处理弹窗、广告、未登录（比如出现「跳过」就点掉，或给 tap 加 optional:true）。不要为了等页面加载写 wait 或 sleep：运行器每步都会自动等到下一步的目标出现就继续；wait 只用来等一个具体的文字出现，sel 必须写这个文字，不能为空。
 5. 付款、下单、提交、发送、发布、删除这类步骤加 confirm:true。
 6. Flow 本身不带时间。用户说「每天 / 每周」时，保存后告诉用户可以在「定时任务」里加一条，提示词写：运行 Flow「名称」。
-7. 速度要说实话：原生步和已缓存的步大约 1 秒一步；AI 视觉步没缓存时每步要一次模型往返（几秒）。建议用户保存后先在卡片上点「试跑」一次，让 AI 把位置学会存回。
+7. 速度要说实话：原生步和已缓存的步通常几百毫秒一步（页面加载时间另算）；选择器失效时先用手机上的文字识别找字，再不行才让 AI 视觉找，视觉每次要一次模型往返（约 2–3 秒）。建议用户保存后先在卡片上点「试跑」一次，让 AI 把位置学会存回。
 8. 用户已有的 Flow 能完成其中一段时（先用 flow_list 看），直接把它当一步调用：{"kind":"call","flowId":"已有 Flow 的 id","args":{"关键词":"{关键词}"}}，args 给子 Flow 的 {参数} 传值。不能调用自己、不能形成循环，最多嵌套 5 层。`
 
 /* ---------- 工具执行：只读的直接返回文字；改动类返回确认卡 */
@@ -102,14 +102,14 @@ export const stepCat = (s: FlowStep) => s.confirm ? 'confirm' : s.kind === 'ai' 
   : ['if', 'else', 'endif', 'while', 'endwhile', 'do', 'dowhile', 'for', 'endfor', 'break', 'continue', 'call'].includes(s.kind) ? 'logic'
     : s.kind === 'set' ? 'var' : ['new', 'method'].includes(s.kind) ? 'cls' : 'act'
 
-/** Flow 的速度说明（确认卡、文档同一口径）：原生 / 缓存约 1 秒一步；AI 视觉没缓存时是一次模型往返。 */
+/** Flow 的速度说明（确认卡、文档同一口径）：v0.23 原生 / 缓存通常几百毫秒一步（页面加载另算）；AI 视觉没缓存时是一次模型往返。 */
 export function flowSpeed(steps: FlowStep[]) {
   const ai = steps.filter(s => (s.kind === 'ai' || s.vision) && !s.sel).length
   const cached = steps.filter(s => (s.kind === 'ai' || s.vision) && s.sel).length
   const act = steps.filter(s => stepCat(s) === 'act' || s.confirm).length
   const dyn = steps.filter(s => (s.kind === 'ai' || s.vision) && !s.sel && /\$\{|(?<!\$)\{[^{}]+\}/.test([s.goal, s.text].join(' '))).length
   const parts = [`原生 ${act + cached} 步`, ai ? `AI 视觉 ${ai} 步` : '']
-  const note = ai ? `原生和已缓存的步大约 1 秒一步；AI 视觉步没缓存时每步要一次模型往返（几秒），找到的位置自动存回，之后走原生。${dyn ? `其中 ${dyn} 步的目标带参数或变量，不会缓存，每次都走 AI 视觉。` : ''}可以先点「试跑」让它学会。` : '全部是原生步，大约 1 秒一步（不含打开应用和页面加载）。'
+  const note = ai ? `原生和已缓存的步通常几百毫秒一步（页面加载另算）；AI 视觉步没缓存时先试手机上的文字识别，再不行要一次模型往返（几秒），找到的位置自动存回，之后走原生。${dyn ? `其中 ${dyn} 步的目标带参数或变量，不会缓存，每次都走 AI 视觉。` : ''}可以先点「试跑」让它学会。` : '全部是原生步，通常几百毫秒一步（不含打开应用和页面加载）。'
   return { ai, cached, text: parts.filter(Boolean).join(' · '), note }
 }
 

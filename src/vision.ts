@@ -12,7 +12,8 @@ const NO_IMG = 'lumi.visionNoImage'
 const SYSTEM = '你是手机界面定位器。根据目标，在元素列表（和截图）里找出要操作的那一个。只输出一行 JSON：{"i":元素编号}；列表里没有但截图里有时输出 {"x":0到1,"y":0到1}（占屏幕宽高的比例）；确实没有输出 {"none":true}。不要解释。'
 
 export function visionPrompt(r: VisionReq): string {
-  const els = r.elements.length > 3500 ? r.elements.slice(0, 3500) + '\n…' : r.elements
+  // v0.23：元素列表来自目标应用窗口、最多 150 个（以前 60 个常被顶栏底栏占满），截断放宽到 6000 字
+  const els = r.elements.length > 6000 ? r.elements.slice(0, 6000) + '\n…' : r.elements
   return `目标：${r.act === 'input' ? '要输入文字的输入框：' : r.act === 'long' ? '要长按的：' : '要点击的：'}${r.goal}\n屏幕 ${r.w}x${r.h}，元素（[编号] 类型 "文字" (描述) {属性} @像素中心）：\n${els}`
 }
 

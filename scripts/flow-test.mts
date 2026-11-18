@@ -2,7 +2,7 @@
 // 同时把几个「TS 展开后」的步骤写到 scripts/flowvm-test/expanded.json，给 Java 的 FlowVm 跑（scripts/flowvm-test/run.sh），做到 TS → Java 端到端。
 import { writeFileSync } from 'node:fs'
 import { bentoLayout, bentoOrder } from '../src/bento.ts'
-import { applyLearned, evalValue, evalVarCond, expandCalls, fill, paramsIn, stepLabel, validateClasses, validateFlow, type Flow, type FlowStep } from '../src/flowcore.ts'
+import { applyLearned, evalValue, evalVarCond, expandCalls, fill, paramsIn, stepLabel, tidy, validateClasses, validateFlow, type Flow, type FlowStep } from '../src/flowcore.ts'
 
 let pass = 0, fail = 0
 const ok = (name: string, cond: boolean, detail?: unknown) => { if (cond) { pass++; console.log('  ok   ' + name) } else { fail++; console.log('  FAIL ' + name, JSON.stringify(detail)) } }
@@ -137,6 +137,18 @@ ok('${变量} 目标的 ai 步不写回选择器', applyLearned([fl2], [{ fid: '
   // 等待确认
   const w = C.waitDecision('x1'); ok('waitDecision 挂起中', C.isWaiting('x1')); C.decide('x1', true); ok('decide 后返回 true', (await w) === true && !C.isWaiting('x1'))
   const ac = new AbortController(); const w2 = C.waitDecision('x2', ac.signal); ac.abort(); ok('停止生成时确认卡按取消处理', (await w2) === false)
+}
+
+// v0.23：空等待步不允许；AI 产出里的空等待步被 tidy 去掉；缓存坐标 hit 写回点击步、带参数的步不写、不计入「AI 找到的位置」
+ok('v0.23 空的等待步报错', errs(validateFlow([{ kind: 'wait', sel: { text: '' } }])).length === 1)
+ok('v0.23 写了文字的等待步通过', errs(validateFlow([{ kind: 'wait', sel: { text: '搜索' } }])).length === 0)
+ok('v0.23 tidy 去掉空等待步', tidy([{ kind: 'tap', sel: { text: 'a' } }, { kind: 'wait', sel: { text: '' } }, { kind: 'wait' }, { kind: 'tap', sel: { text: 'b' } }]).length === 2)
+{
+  const hit = { pkg: 'com.x', act: 'com.x.Main', w: 1080, h: 2400, x: 0.5, y: 0.1, sig: '|搜索|' }
+  const fl = mk('h1', [{ kind: 'tap', sel: { text: '搜索' } }, { kind: 'tap', sel: { text: '{词}' } }])
+  const n = applyLearned([fl], [{ fid: 'h1', i: 0, hit }, { fid: 'h1', i: 1, hit }])
+  ok('v0.23 hit 写回普通点击步、不计数', n === 0 && JSON.stringify(fl.steps[0].hit) === JSON.stringify(hit), fl.steps)
+  ok('v0.23 带参数的步不写 hit', fl.steps[1].hit === undefined)
 }
 
 // 给 Java 的端到端用例（期望的动作序列与 FlowVmTest.FakeHost 的记录格式一致）

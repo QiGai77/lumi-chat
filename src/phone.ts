@@ -10,7 +10,7 @@ interface LumiPhonePlugin {
   click(o: { id: number; long?: boolean }): Promise<{ ok: boolean; step?: { sel: FlowStep['sel']; x: number; y: number; pkg?: string } }>
   inputInfo(o: { id: number }): Promise<{ step?: { sel: FlowStep['sel']; x: number; y: number } }>
   appIcon(o: { pkg?: string; name?: string }): Promise<{ pkg: string; label: string; src: string }>
-  flowRun(o: { name: string; steps: FlowStep[]; fast?: boolean; vars?: Record<string, unknown> }): Promise<Record<string, unknown>>
+  flowRun(o: { name: string; steps: FlowStep[]; fast?: boolean; vars?: Record<string, unknown>; pkg?: string }): Promise<Record<string, unknown>>
   flowStop(): Promise<void>
   flowVisionAnswer(o: { id: string; i?: number; x?: number; y?: number; none?: boolean; error?: string; ms?: number }): Promise<void>
   recordStart(o: { pkg?: string; app?: string; resume?: boolean }): Promise<void>

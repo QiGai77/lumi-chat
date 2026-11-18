@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { GlassIcon, Icon } from './icons'
 import { streamChat, type Settings } from './api'
 import { meshVars, tint, useAppLook } from './appicon'
-import { blockDepths, canExtract, checkFlow, consumeRecording, extractSubflow, findClass, flowSummary, loadFlows, paramsIn, runFlow, runSummary, saveFlows, startRecording, stepLabel, subflowGraph, tidy, upsertFlow,
-  type CondOp, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type TraceItem } from './flow'
+import { blockDepths, canExtract, checkFlow, consumeRecording, extractSubflow, findClass, flowSummary, loadFlows, paramsIn, loadRuns, runFlow, runSplit, runSummary, saveFlows, startRecording, stepLabel, subflowGraph, tidy, upsertFlow,
+  type CondOp, type Flow, type FlowClass, type FlowCond, type FlowMethod, type FlowStep, type RunResult, type SavedRun, type TraceItem } from './flow'
 
 export function useFlows() {
   const [flows, setFlows] = useState<Flow[]>(loadFlows)
@@ -255,31 +255,65 @@ function ClassSheet({ c, flows, self, onSave, onDelete, onClose }: { c: FlowClas
   )
 }
 
-/* ---------- 运行明细 */
-const SRC_LABEL: Record<TraceItem['src'], string> = { native: '原生', cache: '缓存', vision: '视觉', coord: '坐标', logic: '逻辑', skip: '跳过', fail: '失败' }
+/* ---------- 运行明细（v0.23：每步耗时拆成 查找 / 动作 / 等页面 / 识字 / 视觉，标出命中的是哪一层；保留最近 12 次） */
+const SRC_LABEL: Record<TraceItem['src'], string> = { native: '原生', cache: '缓存', vision: '视觉', coord: '坐标', ocr: '识字', logic: '逻辑', skip: '跳过', fail: '失败' }
+const TIER_LABEL: Record<string, string> = { ahead: '预找到', id: 'id', text: '文字', walk: '遍历', bounds: '缓存坐标', focus: '焦点框', edit: '输入框', coord: '坐标', ocr: '识字', vision: '视觉', launch: '启动', retry: '重试' }
+const SEGS = [['lk', '查找'], ['ac', '动作'], ['wt', '等页面'], ['oc', '识字'], ['vs', '视觉']] as const
+const tierText = (x: TraceItem) => (x.tier || '').split('+').filter(Boolean).map(k => TIER_LABEL[k] || k).join(' → ')
 export function RunPanel({ r, onPick }: { r: RunResult; onPick?: (i: number) => void }) {
   const t = (r.trace || []).filter(x => x.src !== 'logic')
   const logic = (r.trace || []).length - t.length
   const max = Math.max(1000, ...t.map(x => x.ms))
-  const fast = t.filter(x => x.src !== 'vision' && x.src !== 'fail' && x.src !== 'skip')
-  const avg = fast.length ? Math.round(fast.reduce((a, x) => a + x.ms, 0) / fast.length) : 0
+  const sp = runSplit(t)
+  const split = t.some(x => x.wt != null)
   return (
     <div className={`run-panel ${r.ok ? 'ok' : 'bad'}`}>
       <div className="rp-head"><span className="rp-dot" /><span className="grow b">{runSummary(r)}</span></div>
       <div className="rp-stats">
         <div><b>{r.ms != null ? (r.ms / 1000).toFixed(1) : '—'}</b><span>总秒数</span></div>
-        <div><b>{avg ? avg : '—'}</b><span>原生均值 ms</span></div>
-        <div><b>{r.visionCalls || 0}</b><span>视觉调用</span></div>
-        <div><b>{r.visionCalls ? Math.round((r.visionMs || 0) / r.visionCalls) : '—'}</b><span>视觉均值 ms</span></div>
+        <div><b>{sp.n ? sp.ms : '—'}</b><span>原生均值 ms</span></div>
+        {split
+          ? <div className="rp-trio"><b>{sp.n ? `${sp.lk}/${sp.ac}/${sp.wt}` : '—'}</b><span>查 / 点 / 等 ms</span></div>
+          : <div><b>{r.visionCalls ? Math.round((r.visionMs || 0) / r.visionCalls) : '—'}</b><span>视觉均值 ms</span></div>}
+        <div><b>{(r.visionCalls || 0) + (r.ocrCalls ? ` / ${r.ocrCalls}` : '')}</b><span>{r.ocrCalls ? '视觉 / 识字' : '视觉调用'}</span></div>
       </div>
-      <ol className="rp-list">{t.map((x, k) => (
-        <li key={k} className={x.src} onClick={() => x.i != null && onPick?.(x.i)}>
-          <span className={`rp-src ${x.src}`}>{SRC_LABEL[x.src]}</span>
-          <span className="grow ell">{x.label}</span>
-          <span className="rp-bar"><i style={{ width: `${Math.min(100, (x.ms / max) * 100)}%` }} /></span>
-          <span className="rp-ms">{x.ms}</span>
-        </li>))}</ol>
-      <div className="t12">{logic ? `另有 ${logic} 个逻辑步（条件、变量、方法进出），几乎不耗时。` : ''}原生 / 缓存步走无障碍，不调模型；视觉步含一次模型往返（截图 + 元素列表），耗时看网络与模型。启动应用与页面加载算在步骤里。</div>
+      <ol className="rp-list">{t.map((x, k) => {
+        const segs = SEGS.map(([key]) => x[key] || 0)
+        const rest = Math.max(0, x.ms - segs.reduce((a, b) => a + b, 0))
+        return (
+          <li key={k} className={x.src} onClick={() => x.i != null && onPick?.(x.i)}>
+            <span className={`rp-src ${x.src}`}>{SRC_LABEL[x.src] || x.src}</span>
+            <span className="grow rp-lb">
+              <span className="ell">{x.label}</span>
+              {x.wt != null && <span className="rp-sub">{[tierText(x), ...SEGS.filter(([key]) => (x[key] || 0) > 0).map(([key, name]) => `${name} ${x[key]}`)].filter(Boolean).join(' · ')}</span>}
+            </span>
+            <span className="rp-bar">{x.wt != null
+              ? <>{SEGS.map(([key], n) => segs[n] > 0 && <i key={key} className={key} style={{ width: `${(segs[n] / max) * 100}%` }} />)}{rest > 0 && <i className="etc" style={{ width: `${(rest / max) * 100}%` }} />}</>
+              : <i style={{ width: `${Math.min(100, (x.ms / max) * 100)}%` }} />}</span>
+            <span className="rp-ms">{x.ms}</span>
+          </li>)
+      })}</ol>
+      {split && <div className="rp-legend">{SEGS.map(([key, name]) => <span key={key}><i className={key} />{name}</span>)}</div>}
+      {r.shot && <img className="rp-shot" alt="失败时的屏幕" src={'data:image/jpeg;base64,' + r.shot} />}
+      <div className="t12">{logic ? `另有 ${logic} 个逻辑步（条件、变量、方法进出），几乎不耗时。` : ''}原生 / 缓存步走无障碍，不调模型；「等页面」是点完后等下一步的目标出现的时间（含应用自己的加载）。识字是手机上的文字识别，视觉步含一次模型往返。</div>
+    </div>
+  )
+}
+
+/** 最近几次运行（本机保存，v0.23）：点一下看那次的明细。 */
+export function RecentRuns({ flowId, onShow }: { flowId?: string; onShow: (r: RunResult) => void }) {
+  const [runs, setRuns] = useState<SavedRun[]>(loadRuns)
+  useEffect(() => { const on = () => setRuns(loadRuns()); window.addEventListener('lumi-flowruns', on); return () => window.removeEventListener('lumi-flowruns', on) }, [])
+  const list = runs.filter(x => !flowId || x.flowId === flowId).slice(0, 8)
+  if (!list.length) return null
+  const hm = (at: number) => { const d = new Date(at); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
+  return (
+    <div className="rp-recent">
+      <div className="t12">最近运行</div>
+      <div className="rp-recent-row">{list.map(x => (
+        <button key={x.at} className={`chip-t ${x.r.ok ? '' : 'bad'}`} onClick={() => onShow(x.r)}>
+          {hm(x.at)} · {x.r.ms != null ? (x.r.ms / 1000).toFixed(1) + ' 秒' : '—'}{x.r.ok ? '' : ' · 失败'}{flowId ? '' : ' · ' + x.name}
+        </button>))}</div>
     </div>
   )
 }
@@ -347,7 +381,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
 - 删掉重复、无意义、误触的步骤；保留 launch 作为第一步
 - 选择器优先用稳定的 id 和简短文字；坐标 x/y 是 0-1 的屏幕比例，保留作为兜底
 - 会变化的内容（搜索词、地址、商品、联系人）改成 {参数名}，参数名用简短中文
-- 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
+- 输入后需要搜索就加 {"kind":"enter"}；不要为了等页面加载加 wait 或 sleep（运行器每步自动等到下一步的目标出现），已有的空等待步删掉；wait 只用来等一个具体文字，sel 不能为空
 - 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
 - 付款、提交订单、发送、删除这类步骤加 confirm:true
 - 已有的 call 步（{"kind":"call","flowId","args"} 运行另一个已保存的 Flow，当作一步）保持不变；可以用 call 调用下面列出的已有 Flow 代替一段重复步骤，args 给子 Flow 的 {参数} 传值；不能调用自己或形成循环
@@ -458,6 +492,7 @@ export function FlowEdit({ id, settings, done }: { id: string; settings: Setting
         </div></>}
       {msg && <div className="imp-msg ok" style={{ marginTop: 12 }}>{msg}</div>}
       {res && <RunPanel r={res} onPick={i => setOpen(i)} />}
+      <RecentRuns flowId={f.id} onShow={r => setRes(r)} />
       {add && <AddSheet classes={[...(f.classes || []), ...flows.filter(x => x.id !== f.id).flatMap(x => x.classes || [])]} flows={flows.filter(x => x.id !== f.id)} look={t} onAdd={insert} onClose={() => setAdd(false)} />}
       {cls && <ClassSheet c={cls.c} flows={flows} self={f} onClose={() => setCls(null)}
         onSave={c => { const a = [...(f.classes || [])]; if (cls.i >= 0) a[cls.i] = c; else a.push(c); put({ ...f, classes: a }); setCls(null) }}

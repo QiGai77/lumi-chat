@@ -1334,3 +1334,23 @@ img.app-ic{border-radius:22%;box-shadow:0 0 0 1px rgba(20,26,38,.06)}
 .merge-bar .btn-ink{flex:none;display:inline-flex;align-items:center;gap:6px}
 .merge-bar .btn-ink:disabled{opacity:.45}
 .add-hint{text-align:center;margin-top:8px}
+/* v0.23 运行明细：每步耗时拆分条 + 命中层 + 最近运行 */
+.rp-lb{display:flex;flex-direction:column;min-width:0;gap:1px}
+.rp-sub{font-size:11px;color:var(--label2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.rp-list .rp-bar{display:flex;width:72px}
+.rp-list .rp-bar i{flex:none;border-radius:0}
+.rp-list .rp-bar i:first-child{border-radius:3px 0 0 3px}.rp-list .rp-bar i:last-child{border-radius:0 3px 3px 0}.rp-list .rp-bar i:only-child{border-radius:3px}
+.rp-list li .rp-bar i.lk{background:#3471E6}.rp-list li .rp-bar i.ac{background:#141A26}.rp-list li .rp-bar i.wt{background:#9AA3B2}
+.rp-list li .rp-bar i.oc{background:#0E9F8A}.rp-list li .rp-bar i.vs{background:#E07A1C}.rp-list li .rp-bar i.etc{background:#D6DAE1}
+.rp-src.ocr{background:#DDF3EE;color:#0E7A66}
+.rp-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:var(--label2)}
+.rp-legend span{display:inline-flex;align-items:center;gap:4px}
+.rp-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.rp-legend i.lk{background:#3471E6}.rp-legend i.ac{background:#141A26}.rp-legend i.wt{background:#9AA3B2}.rp-legend i.oc{background:#0E9F8A}.rp-legend i.vs{background:#E07A1C}
+.rp-shot{display:block;max-width:220px;width:60%;border-radius:12px;border:1px solid var(--card-line)}
+.rp-recent{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.rp-recent-row{display:flex;flex-wrap:wrap;gap:6px}
+.rp-recent-row .chip-t{font-variant-numeric:tabular-nums}
+.rp-recent-row .chip-t.bad{color:#B8361F}
+@media (max-width:400px){.rp-list .rp-bar{width:48px}}
+.rp-stats .rp-trio b{font-size:14px;line-height:21px;white-space:nowrap}

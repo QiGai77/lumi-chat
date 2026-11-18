@@ -91,8 +91,10 @@ public class PhonePlugin extends Plugin {
         final String name = call.getString("name", "Flow");
         final org.json.JSONArray steps = call.getArray("steps", new JSArray());
         final org.json.JSONObject vars = call.getObject("vars", new JSObject());
+        // v0.23：Flow 所属应用的包名，查找只在这个应用的窗口里做（launch 步会再更新）
+        final String pkg = call.getString("pkg", "");
         LumiAdb.IO.execute(() -> {
-            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", true), vars))); }
+            try { call.resolve(JSObject.fromJSONObject(s.flow.run(name, steps, call.getBoolean("fast", true), vars, pkg))); }
             catch (Throwable e) { call.reject("Flow 运行出错：" + e.getMessage()); }
         });
     }

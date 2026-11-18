@@ -22,13 +22,16 @@ public class LumiA11yService extends AccessibilityService {
     @Override protected void onServiceConnected() { instance = this; flow = new LumiFlow(this); }
     @Override public void onDestroy() { instance = null; super.onDestroy(); }
     @Override public boolean onUnbind(android.content.Intent i) { instance = null; return super.onUnbind(i); }
-    @Override public void onAccessibilityEvent(AccessibilityEvent e) { if (flow != null) flow.onEvent(e); }
+    /** v0.23：事件先喂给 Flow 的事件时钟（唤醒正在等页面的运行线程），再给录制。 */
+    @Override public void onAccessibilityEvent(AccessibilityEvent e) { LumiFlow f = flow; if (f == null) return; f.onUi(e); f.onEvent(e); }
     @Override public void onInterrupt() { }
 
     /** 当前屏幕的可交互元素，一行一个：[编号] 类型 "文字" (描述) {可点/可输入/可滚动} @中心坐标 */
-    synchronized String dump(int max) {
+    synchronized String dump(int max) { return dump(max, null); }
+    /** v0.23：root 不为空时读这个窗口（Flow 运行时传目标应用的窗口），否则读活动窗口。 */
+    synchronized String dump(int max, AccessibilityNodeInfo from) {
         nodes.clear();
-        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfo root = from != null ? from : getRootInActiveWindow();
         if (root == null) return "（读不到当前屏幕，可能在锁屏或系统界面）";
         StringBuilder sb = new StringBuilder();
         CharSequence pkg = root.getPackageName();

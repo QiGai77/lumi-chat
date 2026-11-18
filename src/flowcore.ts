@@ -3,9 +3,15 @@
  *
  * v0.16：if/else/while/do-while/for/break/continue/set/call、point/struct 变量。
  * v0.17：class（字段 + 方法，方法体是子流程）、new 实例化、obj.field 读写、obj.method() 调用（运行时 this 绑定）、
- *        ai 步（AI 视觉定位，找到的选择器写回 Flow，下次走原生）。旧 Flow JSON 原样可跑。 */
+ *        ai 步（AI 视觉定位，找到的选择器写回 Flow，下次走原生）。旧 Flow JSON 原样可跑。
+ * v0.23：步上新增可选字段 fp（录制时的页面指纹，坐标兜底要指纹一致）和 hit（验证过的缓存坐标，快速模式里指纹一致时直接点）；
+ *        等待步不能空；运行明细多了每步耗时拆分。旧 Flow 不需要迁移。 */
 
 export interface Sel { id?: string; text?: string; desc?: string; cls?: string }
+/** v0.23 页面指纹：包名 + 最近的 Activity 类名 + 屏幕像素尺寸。 */
+export interface ScreenFp { pkg: string; act?: string; w: number; h: number }
+/** v0.23 缓存坐标：验证通过的点击位置（0-1 比例）+ 当时的页面指纹 + 选择器签名（id|text|desc，选择器改了就作废）。 */
+export interface Hit extends ScreenFp { x: number; y: number; sig: string }
 export type StepKind = 'launch' | 'tap' | 'input' | 'enter' | 'scroll' | 'swipe' | 'key' | 'wait' | 'sleep' | 'ai'
   | 'if' | 'else' | 'endif' | 'while' | 'endwhile' | 'do' | 'dowhile' | 'for' | 'endfor' | 'break' | 'continue' | 'set' | 'call'
   | 'new' | 'method' | 'bind' | 'unbind'
@@ -26,6 +32,8 @@ export interface FlowStep {
   goal?: string; act?: 'tap' | 'long' | 'input'; vision?: boolean
   // v0.17 类：new{var, cls, args}；method{var, method, args, cls?}；bind/unbind 由 expandCalls 生成
   cls?: string; method?: string; args?: Record<string, string>; fields?: Record<string, string>
+  // v0.23：录制时的页面指纹；验证过的缓存坐标（运行后自动写回）
+  fp?: ScreenFp; hit?: Hit
   // 运行时标注：步骤在哪个 Flow（或类方法）的第几步，用来把 AI 学到的选择器写回去
   _i?: number; _fid?: string
 }
@@ -408,7 +416,11 @@ export function validateFlow(steps: FlowStep[], all?: Flow[], initialVars?: Reco
         if (s.act === 'input' && !s.text) warn.push(`警告：第 ${at} 步 AI 输入没有填文字`)
         break
       case 'tap': if (s.pointVar) checkPath(s.pointVar, at); break
-      case 'input': case 'wait': checkExpr(s.text, at); break
+      case 'wait':
+        // v0.23：空的等待步什么也等不到（运行器每步已经自动等到下一步的目标出现），不允许保存
+        if (!(s.sel?.text || s.sel?.desc || s.sel?.id)) errs.push(`错误：第 ${at} 步「等待出现」要写等哪个文字；只是等页面加载的话删掉这一步，Flow 每步会自动等到下一步的目标出现`)
+        checkExpr(s.text, at); break
+      case 'input': checkExpr(s.text, at); break
       default: break
     }
     if (s.kind === 'tap' || s.kind === 'input' || s.kind === 'wait') for (const m of [s.sel?.text, s.sel?.desc, s.text].join(' ').matchAll(new RegExp(`\\$\\{(${PATH})\\}`, 'g'))) checkPath(m[1], at)
@@ -513,6 +525,8 @@ export function tidy(steps: FlowStep[], app?: string): FlowStep[] {
     delete s._i; delete s._fid
     const prev = out[out.length - 1]
     if (s.kind === 'input' && !s.text) continue
+    // v0.23：AI 生成 / 优化时偶尔会写出空的等待步，直接去掉（运行器会自动等页面）
+    if (s.kind === 'wait' && !(s.sel?.text || s.sel?.desc || s.sel?.id)) continue
     if (s.kind === 'scroll' && prev?.kind === 'scroll' && prev.forward === s.forward) continue
     if (s.kind === 'launch' && out.some(x => x.kind === 'launch')) continue
     if (s.kind === 'launch' && app && !s.app) s.app = app
@@ -523,7 +537,7 @@ export function tidy(steps: FlowStep[], app?: string): FlowStep[] {
 }
 
 /** 运行结果里 AI 视觉学到的位置：写回对应 Flow / 类方法的那一步。带 {参数} 或 ${变量} 的步不写（选择器会把某次的值写死）。返回写回了几步。 */
-export interface Learned { fid: string; i: number; sel?: Sel; x?: number; y?: number }
+export interface Learned { fid: string; i: number; sel?: Sel; x?: number; y?: number; hit?: Hit }
 export function applyLearned(all: Flow[], learned: Learned[]): number {
   let n = 0
   for (const l of learned) {
@@ -537,7 +551,10 @@ export function applyLearned(all: Flow[], learned: Learned[]): number {
       steps = m.steps
     }
     const s = steps[l.i]
-    if (!s || (s.kind !== 'ai' && !(s.kind === 'tap' && s.vision)) || hasParam(s) || hasDynamic(s)) continue
+    if (!s || hasParam(s) || hasDynamic(s)) continue
+    // v0.23：缓存坐标（快速模式直接点）可以写到任何点击步上，不计入「AI 找到的位置」
+    if (l.hit) { if (s.kind === 'tap' || s.kind === 'ai') { s.hit = l.hit; f.updated = Date.now() } continue }
+    if (s.kind !== 'ai' && !(s.kind === 'tap' && s.vision)) continue
     if (l.sel && Object.keys(l.sel).length) s.sel = l.sel
     if (l.x != null && l.y != null) { s.x = l.x; s.y = l.y }
     f.updated = Date.now()

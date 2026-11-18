@@ -40,10 +40,19 @@ public class FlowVm {
         String act(JSONObject step, int pc);
         /** 刚执行的动作是怎么完成的：native（无障碍选择器）/ vision（AI 视觉）/ coord（坐标兜底）。 */
         String lastSrc();
-        /** 步后等待。 */
+        /** 步后固定等待（只用于步上显式写的 after 毫秒数）。 */
         void settle(long ms);
-        /** 下一步需要视觉时提前截图（可空实现）。 */
-        void prefetch(JSONObject next);
+        /** v0.17 的视觉预取截图；v0.23 起不再调用（截图只在页面安静后拍），保留给旧实现。 */
+        default void prefetch(JSONObject next) { }
+        /**
+         * v0.23 步后等待（事件驱动 + look-ahead）：动作 done 已派发，next 是下一步（已插值的动作步、控制步原样，或 null）。
+         * 返回 ok（下一步的目标已经找到 / 不需要确认）、settled（没有可找的目标，页面已安静）、
+         * miss（页面有反应但预算内没找到下一步的目标）、noreact（没找到且目标应用没有任何反应）。
+         * 默认实现不等待，返回 ok（JVM 单测用）。
+         */
+        default String after(JSONObject done, JSONObject next) { return "ok"; }
+        /** v0.23 刚完成那一步的耗时拆分 {lk, ac, wt, vs, oc, tier}，可为 null。 */
+        default JSONObject timing() { return null; }
     }
 
     public static final int MAX_EXEC_STEPS = 500;
@@ -104,18 +113,37 @@ public class FlowVm {
                 if (rs == null) return fail(res, log, stepMs, trace, pc, executed, lb + "：" + controlError, t0);
                 if (st.optBoolean("confirm") && !h.confirm(lb)) { userStop = true; break; }
                 String err = h.act(rs, pc);
+                String src = err == null ? h.lastSrc() : "fail";
+                if (err != null) {
+                    long took = System.currentTimeMillis() - s0;
+                    stepMs.put(took);
+                    if (st.optBoolean("optional")) {
+                        log.put("跳过：" + lb + " · " + took + "ms"); trace.put(tr(st, pc, lb, took, "skip", h.timing()));
+                        pc++; continue;
+                    }
+                    trace.put(tr(st, pc, lb, took, "fail", h.timing()));
+                    return fail(res, log, stepMs, trace, pc, executed, lb + "：" + err, t0);
+                }
+                // v0.23：不再固定睡 120/450ms。事件驱动地等到下一步的目标出现（look-ahead），找到就立刻进入下一步；
+                // 目标应用完全没反应时用手势重做这一步一次，还是没反应才判失败。
+                if (st.has("after")) h.settle(st.optInt("after"));
+                JSONObject nx = peekNext(steps, pc);
+                String w = h.after(rs, nx);
+                if ("noreact".equals(w) && retryable(rs)) {
+                    JSONObject again = new JSONObject(rs.toString()); again.put("_retry", true);
+                    String e2 = h.act(again, pc);
+                    w = e2 == null ? h.after(again, nx) : "noreact";
+                    if (e2 == null) src = h.lastSrc();
+                }
                 long took = System.currentTimeMillis() - s0;
                 stepMs.put(took);
-                String src = err == null ? h.lastSrc() : "fail";
-                if (err != null && st.optBoolean("optional")) {
-                    log.put("跳过：" + lb + " · " + took + "ms"); trace.put(tr(st, pc, lb, took, "skip"));
-                    pc++; continue;
+                if ("noreact".equals(w) && retryable(rs)) {
+                    if (st.optBoolean("optional")) { log.put("跳过：" + lb + " · " + took + "ms"); trace.put(tr(st, pc, lb, took, "skip", h.timing())); pc++; continue; }
+                    trace.put(tr(st, pc, lb, took, "fail", h.timing()));
+                    return fail(res, log, stepMs, trace, pc, executed, lb + "：点了没反应（已用手势重试一次）", t0);
                 }
-                if (err != null) { trace.put(tr(st, pc, lb, took, "fail")); return fail(res, log, stepMs, trace, pc, executed, lb + "：" + err, t0); }
                 log.put(lb + " · " + took + "ms");
-                trace.put(tr(st, pc, lb, took, src));
-                if (pc + 1 < n) h.prefetch(steps.optJSONObject(pc + 1));
-                h.settle(st.has("after") ? st.optInt("after") : (fast ? 120 : 450));
+                trace.put(tr(st, pc, lb, took, src, h.timing()));
                 pc++;
             }
             boolean stopped = userStop || h.stopped();
@@ -134,14 +162,40 @@ public class FlowVm {
         return res;
     }
 
-    private JSONObject tr(JSONObject st, int pc, String lb, long ms, String src) {
+    private JSONObject tr(JSONObject st, int pc, String lb, long ms, String src) { return tr(st, pc, lb, ms, src, null); }
+    /** trace 一项；tm 是宿主给的耗时拆分（lk 查找 / ac 动作 / wt 等页面 / vs 视觉 / oc 文字识别 / tier 命中层）。 */
+    private JSONObject tr(JSONObject st, int pc, String lb, long ms, String src, JSONObject tm) {
         JSONObject o = new JSONObject();
         try {
             o.put("pc", pc); o.put("label", lb); o.put("ms", ms); o.put("src", src);
             if (st.has("_i")) o.put("i", st.optInt("_i"));
             if (st.has("_fid")) o.put("fid", st.optString("_fid"));
+            if (tm != null) for (Iterator<String> it = tm.keys(); it.hasNext(); ) { String k = it.next(); o.put(k, tm.opt(k)); }
         } catch (Exception ignored) { }
         return o;
+    }
+
+    /** 只有点击类动作在「完全没反应」时值得重做一次（输入、按键、滑动重做可能重复生效）。 */
+    static boolean retryable(JSONObject st) {
+        String k = st.optString("kind");
+        if ("tap".equals(k)) return !st.optBoolean("coordOnly");
+        return "ai".equals(k) && !"input".equals(st.optString("act"));
+    }
+
+    /** look-ahead 用的下一步：跳过 endif / unbind（它们之后紧接着执行的就是下一步）；动作步先插值；其它控制步原样返回（宿主只做安静等待）。 */
+    JSONObject peekNext(JSONArray steps, int pc) {
+        for (int i = pc + 1; i < steps.length(); i++) {
+            JSONObject o = steps.optJSONObject(i);
+            if (o == null) return null;
+            String k = o.optString("kind");
+            if (k.equals("endif") || k.equals("unbind")) continue;
+            if (isControl(k)) return o;
+            String keep = controlError;
+            JSONObject r = resolveStep(o);
+            controlError = keep;
+            return r == null ? o : r;
+        }
+        return null;
     }
 
     private JSONObject fail(JSONObject res, JSONArray log, JSONArray stepMs, JSONArray trace, int pc, int executed, String reason, long t0) {
