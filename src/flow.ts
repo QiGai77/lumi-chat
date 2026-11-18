@@ -31,6 +31,7 @@ export const checkFlow = (fl: Flow, all = loadFlows()) => [...validateFlow(fl.st
 
 /** 跑一个 Flow：校验 → 标注步骤来源 → 填参数 → 展开 call/类方法 → 原生执行；AI 视觉请求在这里调模型；学到的选择器写回。 */
 export async function runFlow(fl: Flow, vals: Record<string, string> = {}): Promise<RunResult> {
+  if (!isNative) throw new Error('Flow 要在安卓 App 里运行，网页版只能查看和编辑')
   const all = loadFlows()
   const errors = checkFlow(fl, all).filter(p => p.startsWith('错误'))
   if (errors.length) return { ok: false, done: 0, total: fl.steps.length, failedAt: 0, reason: errors.join('；') }

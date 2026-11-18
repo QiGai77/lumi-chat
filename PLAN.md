@@ -1,5 +1,23 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.21（2026-11-18，分支 v017-flow）
+需求：网页版全功能 Playwright 端到端测试并修 bug；字体改成「中文一律衬线、西文 Anthropic Sans」；侧栏长按暂不改（等参考图）；版本 0.21.0、出新 APK。
+
+- **测试**：新脚本 `scripts/e2e_v21.py`（段：chat side rp pages pages2 flow native custom fonts；不写就全跑，单次超 2 分钟时分段跑）+ 模拟网关 `scripts/mock_sse.py`（真 SSE 逐块输出、工具调用、AI 视觉非流式、/v1/usage、最小 MCP；请求写到 /tmp/mock_reqs.jsonl 供断言系统提示 / 工具列表）。`native` 段复用 v20 的 LumiPhone 模拟（运行、AI 视觉写回、应用图标）。每次截图都检查横向溢出和 `.app` 是否被滚动；收集 console error / pageerror / HTTP ≥400。结果 218 项全部通过（chat+side+rp 54、pages+pages2+flow 92、native+custom+fonts 72），无页面报错（剩下的 404 / ERR_UNSAFE_PORT 是测试故意请求的失败地址）。`node scripts/flow-test.mts` 59 项通过，oxlint 0 错误（19 个旧警告）。
+- **修的 bug**：
+  1. 整个 `.app` 会被聚焦 / scrollIntoView 往上推（`overflow:hidden` 仍可被程序滚动），露出藏在底下的「选择模式」面板、侧栏图标栏被切掉 → `.app` 改 `overflow:clip`（保留 hidden 兜底）。
+  2. 角色状态卡的进度条被 Flow 运行明细同名的 `.rp-bar` 样式覆盖（宽 56px、overflow hidden，看不到 84/100 数值）→ 运行明细的规则限定为 `.rp-list .rp-bar`。
+  3. 网页版运行 Flow 显示英文报错「"LumiPhone" plugin is not implemented on web」→ `runFlow` 在网页版直接给中文提示。
+  4. 发送后输入框不回到一行高（对话页和首页都是）→ 发送时清掉 textarea 的内联高度。
+  5. 手机工具在网页版失败时（phone_screen）步骤里不显示原因 → 失败时显示结果。
+  6. 壁纸选到打不开的图片会抛未处理的异常 → try/catch 提示「这张图片打不开」。
+  7. MCP 地址是本机 / 内网 IP 时去请求 duckduckgo / google 的图标（必然失败，控制台报错）→ 这类地址直接用玻璃插头图标。
+- **字体**（`src/index.css` 顶部 @font-face + `--font`）：`"Anthropic Sans", "Inter", "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "STSong", serif`；`--serif` 也指向它（标题同样是中文衬线 + 西文无衬线）。Anthropic Sans 是 Anthropic 专有字体，只按名字引用不打包；开源替身 Inter（OFL，latin 子集可变字重 48 KB），它的 unicode-range 去掉了 — ‘’“” … 让中文引号、省略号、破折号走衬线。中文衬线打包 Noto Serif SC 子集（OFL，`src/assets/fonts/`，许可证文本同目录）：Regular = GB2312 全部 6763 字 + 标点（2.68 MB），SemiBold（600–900）= GB2312 一级 3755 字（1.52 MB），共约 4.2 MB；本机有 Noto Serif SC / 思源宋体时先用本机的（local()）。子集外的生僻字退回系统字体。代码块、`.mono` 仍是等宽；角色卡 HTML 沙箱 iframe 默认字体也改成同一栈（iframe 里拿不到打包字体，退回系统衬线）。实测：把系统 Noto Serif CJK 移走后中文仍渲染成打包的衬线。
+- **侧栏长按**：没动（等用户参考图）。
+- **版本**：0.21.0（versionCode 22），设置页页脚 v0.21。
+- **截图**：`design/v21/`：chat-fonts.png（新字体的对话）、flow-bento.png（Flow 总览）、flow-editor.png（编辑器时间线），合成预览 `design/v21/v21_preview.jpg`。
+- **没测到 / 限制**：原生部分（无障碍读屏、录制、ADB 配对 / shell、SAF 文件夹、真实应用图标渲染、悬浮条）只能在真机上测，这次测的是网页回退提示和模拟插件下的界面；图片 / 视频生成只测了失败提示（模拟网关不出图）；chub.ai 链接导入只测了失败提示（沙盒外网不通）；真网关 api.qigai.tech 没连（全用模拟网关）。
+
 ## v0.20（2026-11-18，分支 v017-flow）
 用户需求（原话）：「头像使用app原生图标 还有 支持在聊天里面定制技能，mcp，flow并且flow是结合ai视觉的一套针对任务，新版apk」。保留 v0.19 布局（便当格、钱包叠卡）和白底 + 主题色浅渐变卡面。
 

@@ -351,7 +351,8 @@ function Favicon({ site, status }: { site: string; name?: string; status: McpSer
   return <FaviconImpl site={site} status={status} />
 }
 function FaviconImpl({ site, status }: { site: string; status: McpServer['status'] }) {
-  const srcs = [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
+  // 本机 / 内网 IP 没有公开图标，直接用玻璃插头图标，不去请求外部图标服务
+  const srcs = /^(localhost|127\.|10\.|192\.168\.|\d+\.\d+\.\d+\.\d+(:\d+)?$)/.test(site) ? [] : [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
   const [i, setI] = useState(0)
   return (
     <span className="fav">
@@ -506,7 +507,7 @@ function Home({ convs, tier, think, setThink, onMode, onSend, onOpen, onDelete }
   const [q, setQ] = useState('')
   const ta = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
-  const go = () => { if (!text.trim()) return; onSend({ text, gen }); setText(''); setGen('chat') }
+  const go = () => { if (!text.trim()) return; onSend({ text, gen }); setText(''); setGen('chat'); if (ta.current) ta.current.style.height = '' }
   const fill = (s: string) => { setText(s); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(s.length, s.length) } }) }
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
 
@@ -919,7 +920,7 @@ function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
         <Icon n="down" s={14} w={2.2} /></button>
       {open && <ol>{steps.map((st, i) => (
         <li key={i} className={st.ok === false ? 'bad' : ''}><span className="sd"><Icon n={st.ok === false ? 'x' : 'check'} s={11} w={2.8} /></span>
-          <div className="grow"><div>{st.label}</div>{st.result && st.name !== 'phone_screen' && <div className="sr">{st.result}</div>}</div></li>))}</ol>}
+          <div className="grow"><div>{st.label}</div>{st.result && (st.name !== 'phone_screen' || st.ok === false) && <div className="sr">{st.result}</div>}</div></li>))}</ol>}
     </div>
   )
 }
@@ -1255,6 +1256,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
     const content = (say ?? text).trim()
     if (!override && !content) return
     setText(''); setErr(''); setBusy(true); pinned.current = true
+    if (taRef.current) taRef.current.style.height = '' // 发出后输入框回到一行高
     ctrl.current = new AbortController()
     if (!override && mode !== 'chat') { setGen('chat'); await runMedia(mode, content); setBusy(false); ctrl.current = null; return }
     const base = override ?? [...conv.messages, { role: 'user' as const, content }]
@@ -1628,7 +1630,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
           <span className="t16">选择壁纸图片</span><span className="t13" style={{ marginLeft: 'auto' }}>仅存本机</span></button>}
         <input ref={file} type="file" accept="image/*" hidden onChange={async e => {
           const fl = e.target.files?.[0]; if (!fl) return
-          const v = Date.now(); await putBlob('wallpaper:' + v, await shrinkImage(fl)); onWall(v); e.target.value = ''
+          try { const v = Date.now(); await putBlob('wallpaper:' + v, await shrinkImage(fl)); onWall(v) } catch { alert('这张图片打不开，换一张试试') } finally { e.target.value = '' }
         }} />
       </div>
       <div className="sec">会员与帮助</div>
@@ -1645,7 +1647,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.20 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.21 · 开源 MIT</div>
     </section>
   )
 }
