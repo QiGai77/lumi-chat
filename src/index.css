@@ -1215,3 +1215,67 @@ button.row:active{background:rgba(20,26,38,.03);transform:none}
 .bh-list,.wc-in{background:rgba(255,255,255,.88)}
 .bh-list,.wcard.open .wc-in{box-shadow:inset 0 0 0 1px rgba(20,26,38,.06),0 6px 16px -12px rgba(20,26,38,.18)}
 .mesh .ft-play{background:var(--ink);color:#fff;box-shadow:0 6px 14px -8px var(--ink)}
+
+/* =====================================================================================
+   v0.20 原生应用图标 + 在对话里定制（技能 / MCP / Flow 确认卡）+ 按任务生成 Flow
+   ===================================================================================== */
+/* 应用图标：真机上是原生启动图标（Java 已裁成圆角方形），这里只再加一圈发丝描边 */
+img.app-ic{border-radius:22%;box-shadow:0 0 0 1px rgba(20,26,38,.06)}
+.fa-ring img.app-ic,.fh-ring img.app-ic{box-shadow:none}
+/* 叠卡标题条：左边是应用图标，右下角小徽标是 Flow 类型 */
+.wc-ic{position:relative;flex:none;width:38px;height:38px;display:grid;place-items:center;border-radius:12px;background:#fff;box-shadow:0 0 0 1px rgba(20,26,38,.06),0 4px 10px -6px rgba(20,26,38,.25)}
+.wc-ic .app-ic{border-radius:10px}
+.wc-gl{position:absolute;right:-4px;bottom:-4px;width:18px;height:18px;border-radius:7px;display:grid;place-items:center;background:var(--ink,#141a26);color:#fff;box-shadow:0 0 0 2px #fff}
+/* 按任务生成 */
+.f-sum{gap:8px}.f-sum>span{margin-right:auto}
+.gen-btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:18px;background:#fff;color:var(--ink);font-size:14px;font-weight:600;box-shadow:inset 0 0 0 1px rgba(20,26,38,.1),0 6px 14px -10px rgba(20,26,38,.35)}
+.fh-btns{position:absolute;right:16px;top:20px;display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.fh-btns .fh-rec{position:static}
+.fh-gen{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:16px;background:#fff;color:var(--ink);font-size:13px;font-weight:600;box-shadow:inset 0 0 0 1px rgba(20,26,38,.1)}
+.ask-bar{width:100%;display:flex;align-items:center;gap:12px;padding:12px 14px;margin:0 0 14px;border-radius:20px;background:rgba(255,255,255,.82);text-align:left;box-shadow:inset 0 0 0 1px rgba(20,26,38,.07),0 10px 24px -18px rgba(20,26,38,.35)}
+.ask-bar .t12{color:var(--label2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ask-bar .grow{min-width:0}
+.ask-ic{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;color:#fff;background:linear-gradient(140deg,#f6835d,#d9472f)}
+.ask-in{min-height:84px}
+.ask-ex{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.ask-ex .chip{height:auto;min-height:34px;padding:7px 12px;text-align:left;line-height:1.35;white-space:normal}
+.btn-run:disabled{opacity:.45}
+.ag-tag{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:600;vertical-align:2px;background:var(--accent-soft,#ffeae2);color:#b8361f}
+/* 对话里的确认卡 / 结果卡 */
+.ccard{margin:2px 0 12px;padding:14px;border-radius:22px;background:#fff;box-shadow:inset 0 0 0 1px rgba(20,26,38,.07),0 14px 30px -22px rgba(20,26,38,.45);max-width:560px}
+.ccard.wait{box-shadow:inset 0 0 0 1.5px rgba(224,88,62,.45),0 14px 30px -20px rgba(224,88,62,.5)}
+.cc-head{display:flex;align-items:center;gap:12px;min-width:0}
+.cc-head .ag-i{width:40px;height:40px;border-radius:13px}
+.cc-head .grow{min-width:0}
+.cc-t{font-size:12px;color:var(--label2);font-weight:600}
+.cc-n{font-size:16px;font-weight:700;color:var(--ink)}
+.cc-s{font-size:12.5px;color:var(--label2)}
+.cc-st{flex:none;font-size:12px;font-weight:600;padding:4px 9px;border-radius:10px;background:rgba(20,26,38,.06);color:var(--label2)}
+.ccard.wait .cc-st{background:#ffeae2;color:#b8361f}
+.st-saved .cc-st,.st-done .cc-st{background:#ddf4e8;color:#0c6e4c}
+.st-failed .cc-st{background:#fff1f0;color:#b4321f}
+.cc-st.expired{background:rgba(20,26,38,.05);color:#8a909c}
+.cc-kv{margin:12px 0 0;display:grid;gap:6px}
+.cc-kv>div{display:grid;grid-template-columns:64px 1fr;gap:10px;font-size:13px;line-height:1.5}
+.cc-kv dt{color:var(--label2)}
+.cc-kv dd{margin:0;color:var(--ink);white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto}
+.cc-steps{list-style:none;margin:12px 0 0;padding:8px;border-radius:14px;background:rgba(20,26,38,.035);display:grid;gap:2px}
+.cc-steps li{display:flex;align-items:center;gap:8px;font-size:13px;padding:5px 4px;min-width:0}
+.cc-steps li .grow{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-no{flex:none;width:20px;height:20px;border-radius:7px;display:grid;place-items:center;font-size:11px;font-weight:700;background:#fff;color:var(--label2);box-shadow:inset 0 0 0 1px rgba(20,26,38,.08)}
+.cc-tag{flex:none;font-size:11px;font-weight:600;padding:2px 7px;border-radius:8px}
+.cat-ai .cc-tag{background:#fff0d6;color:#8a4708}.cat-ai .cc-no{background:#fff0d6;color:#8a4708;box-shadow:none}
+.cat-logic .cc-tag{background:#ece8ff;color:#4a37b5}.cat-var .cc-tag{background:#e3eeff;color:#1f55ad}.cat-cls .cc-tag{background:#ddf3ee;color:#0b6656}
+.cat-confirm .cc-tag{background:#ffeae2;color:#b8361f}
+.cc-more button{font-size:12.5px;color:var(--accent-ink,#b8361f);font-weight:600;padding:2px 4px}
+.cc-warn{margin:10px 0 0;padding:0 0 0 18px;font-size:12.5px;color:#8a4708;line-height:1.5}
+.cc-note{margin-top:10px;font-size:13px;line-height:1.5;padding:9px 11px;border-radius:12px;background:#f2f7f4;color:#0c5a3f}
+.cc-note.bad{background:#fff1f0;color:#b4321f}
+.cc-btns{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:12px}
+.cc-btns .btn-ghost{height:38px;padding:0 14px;font-size:14px}
+.cc-ok{display:inline-flex;align-items:center;gap:6px;height:38px;padding:0 16px;border-radius:19px;background:linear-gradient(180deg,#cc4a2e,#c13f27);color:#fff;font-size:14px;font-weight:600}
+.cc-ok.danger{background:linear-gradient(180deg,#c43c2a,#a92f1f)}
+.cc-ok:disabled{opacity:.5}
+.ccard .rp{margin-top:10px}
+.gen-btn,.f-sum .rec-btn{flex:none;white-space:nowrap}
+@media (max-width:520px){.f-sum{flex-wrap:wrap;row-gap:10px}.f-sum>span{flex:1 0 100%}}

@@ -27,6 +27,7 @@ export interface Settings {
   videoModel: string
   videoSeconds: number
   theme: 'peach' | 'wallpaper'
+  chatCustom: boolean    // v0.20：普通对话里可以定制技能 / MCP / Flow（带确认卡）
 }
 /** 内置网关的公开客户端密钥：装好就能用，服务端按 IP 限流。 */
 export const APP_KEY = 'lumi-app-7f3c9a2e'
@@ -40,6 +41,7 @@ export const defaultSettings: Settings = {
   imageModel: 'gpt-image-1', imageSize: '1024x1024',
   videoModel: 'sora-2', videoSeconds: 4,
   theme: 'peach',
+  chatCustom: true,
 }
 const SK = 'lumi.settings'
 export function loadSettings(): Settings {
@@ -61,7 +63,7 @@ export const feedbackPage = () => PLATFORM_URL + '/feedback'
 export function saveSettings(s: Settings) { localStorage.setItem(SK, JSON.stringify(s)) }
 
 export interface Media { kind: 'image' | 'video'; id: string; prompt: string; status: 'pending' | 'done' | 'error'; error?: string; remote?: string }
-export interface Step { name: string; label: string; args: Record<string, unknown>; result?: string; ok?: boolean }
+export interface Step { name: string; label: string; args: Record<string, unknown>; result?: string; ok?: boolean; card?: import('./custom').ChatCard }
 export interface ToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
 export type ApiMsg = { role: 'system' | 'user' | 'assistant' | 'tool'; content: string; tool_calls?: ToolCall[]; tool_call_id?: string; reasoning_content?: string }
 export interface Msg { role: 'user' | 'assistant'; content: string; steps?: Step[]; trace?: import('./flow').FlowStep[]; reasoning?: string; tier?: Tier; cost?: number; ms?: number; media?: Media; fav?: boolean; thinkMs?: number; stopped?: boolean }

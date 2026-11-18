@@ -155,23 +155,36 @@ public class PhonePlugin extends Plugin {
         }
         JSObject o = new JSObject(); o.put("apps", arr); call.resolve(o);
     }
+    /** 应用的原生启动图标 → PNG data URL（v0.20）。
+     * 先按包名找（有启动入口才算），找不到再按应用名在启动器列表里找：完全相同 > 名字包含 > 被名字包含（≥2 字）。
+     * 取启动 Activity 的图标（和桌面上看到的一致），自适应图标（API 26+）手动把背景层和前景层画进圆角方形里，
+     * 其他图标按 intrinsic 尺寸等比画进 160px 位图；画出来全透明就退回 Drawable.draw。 */
     @PluginMethod public void appIcon(PluginCall call) {
         String pkg = call.getString("pkg", ""), name = call.getString("name", "");
+        if (pkg == null) pkg = "";
+        if (name == null) name = "";
         PackageManager pm = ctx().getPackageManager();
         try {
-            if (pkg.isEmpty() || pm.getLaunchIntentForPackage(pkg) == null) {
-                pkg = "";
+            ComponentName comp = null;
+            if (!pkg.isEmpty()) {
+                Intent li = pm.getLaunchIntentForPackage(pkg);
+                if (li != null) comp = li.getComponent();
+                else { try { pm.getApplicationInfo(pkg, 0); } catch (PackageManager.NameNotFoundException e) { pkg = ""; } }
+            }
+            if (pkg.isEmpty() && !name.trim().isEmpty()) {
+                String want = norm(name);
+                int best = 0;
                 for (ResolveInfo r : pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0)) {
-                    String label = String.valueOf(r.loadLabel(pm));
-                    if (!name.isEmpty() && (label.equalsIgnoreCase(name) || label.contains(name))) { pkg = r.activityInfo.packageName; if (label.equalsIgnoreCase(name)) break; }
+                    String label = norm(String.valueOf(r.loadLabel(pm)));
+                    int score = label.equals(want) ? 3 : label.contains(want) ? 2 : (label.length() >= 2 && want.contains(label)) ? 1 : 0;
+                    if (score > best) { best = score; pkg = r.activityInfo.packageName; comp = new ComponentName(r.activityInfo.packageName, r.activityInfo.name); if (score == 3) break; }
                 }
             }
             if (pkg.isEmpty()) { call.reject("没找到应用"); return; }
-            android.graphics.drawable.Drawable d = pm.getApplicationIcon(pkg);
-            int sz = 144;
-            android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(sz, sz, android.graphics.Bitmap.Config.ARGB_8888);
-            android.graphics.Canvas c = new android.graphics.Canvas(bm);
-            d.setBounds(0, 0, sz, sz); d.draw(c);
+            android.graphics.drawable.Drawable d = null;
+            if (comp != null) { try { d = pm.getActivityIcon(comp); } catch (Exception ignored) { } }
+            if (d == null) d = pm.getApplicationIcon(pkg);
+            android.graphics.Bitmap bm = renderIcon(d, 160);
             java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
             bm.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, bo);
             JSObject o = new JSObject();
@@ -179,6 +192,38 @@ public class PhonePlugin extends Plugin {
             o.put("src", "data:image/png;base64," + android.util.Base64.encodeToString(bo.toByteArray(), android.util.Base64.NO_WRAP));
             call.resolve(o);
         } catch (Exception e) { call.reject("读不到图标：" + e.getMessage()); }
+    }
+    private static String norm(String s) { return s == null ? "" : s.replaceAll("[\\s\\u00a0\\u200b]+", "").toLowerCase(java.util.Locale.ROOT); }
+
+    /** 把图标画成 sz×sz 的位图。自适应图标：两层各占 1.5 倍可见区（108dp / 72dp），裁成 22% 圆角的方形。 */
+    static android.graphics.Bitmap renderIcon(android.graphics.drawable.Drawable d, int sz) {
+        android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(sz, sz, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas c = new android.graphics.Canvas(bm);
+        if (Build.VERSION.SDK_INT >= 26 && d instanceof android.graphics.drawable.AdaptiveIconDrawable) {
+            android.graphics.drawable.AdaptiveIconDrawable a = (android.graphics.drawable.AdaptiveIconDrawable) d;
+            android.graphics.Path mask = new android.graphics.Path();
+            float r = sz * 0.22f;
+            mask.addRoundRect(new android.graphics.RectF(0, 0, sz, sz), r, r, android.graphics.Path.Direction.CW);
+            c.save(); c.clipPath(mask);
+            int pad = sz / 4;
+            android.graphics.drawable.Drawable bg = a.getBackground(), fg = a.getForeground();
+            if (bg != null) { bg.setBounds(-pad, -pad, sz + pad, sz + pad); bg.draw(c); } else c.drawColor(android.graphics.Color.WHITE);
+            if (fg != null) { fg.setBounds(-pad, -pad, sz + pad, sz + pad); fg.draw(c); }
+            c.restore();
+        } else {
+            int w = d.getIntrinsicWidth(), h = d.getIntrinsicHeight();
+            if (w <= 0 || h <= 0) { w = sz; h = sz; }
+            float k = Math.min((float) sz / w, (float) sz / h);
+            int dw = Math.round(w * k), dh = Math.round(h * k), x = (sz - dw) / 2, y = (sz - dh) / 2;
+            d.setBounds(x, y, x + dw, y + dh); d.draw(c);
+        }
+        if (blank(bm)) { bm.eraseColor(android.graphics.Color.TRANSPARENT); d.setBounds(0, 0, sz, sz); d.draw(c); }
+        return bm;
+    }
+    private static boolean blank(android.graphics.Bitmap bm) {
+        int w = bm.getWidth(), h = bm.getHeight();
+        for (int y = 0; y < h; y += 8) for (int x = 0; x < w; x += 8) if ((bm.getPixel(x, y) >>> 24) > 16) return false;
+        return true;
     }
     @PluginMethod public void launch(PluginCall call) {
         String name = call.getString("name", "").trim();

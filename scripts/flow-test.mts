@@ -84,6 +84,61 @@ ok('便当格 1–30 个应用无重叠无洞', !bad, bad)
 ok('便当格第一名是 hero，按 Flow 数排序', bentoLayout(3, 2)[0].size === 'hero' && bentoOrder(['a', 'b', 'c'], x => ({ a: 1, b: 3, c: 3 })[x]!).join('') === 'bca')
 ok('便当格 7 个应用的手机排法固定', bentoLayout(7, 2).map(c => c.size).join() === 'hero,wide,tall,sq,sq,wide,sq,add', bentoLayout(7, 2).map(c => c.size))
 
+// v0.20：循环里 ${i} 的 ai 步不写回（每次目标不同）
+const fl2 = mk('loop', [{ kind: 'for', var: 'i', from: 1, to: 3 }, { kind: 'ai', goal: '第 ${i} 篇笔记' }, { kind: 'endfor' }])
+ok('${变量} 目标的 ai 步不写回选择器', applyLearned([fl2], [{ fid: 'loop', i: 1, sel: { text: '笔记1' } }]) === 0 && !fl2.steps[1].sel)
+
+// v0.20：对话里定制技能 / MCP / Flow 的工具（确认卡 → 保存 → 撤销）
+{
+  const mem = new Map<string, string>()
+  ;(globalThis as Record<string, unknown>).localStorage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, String(v)), removeItem: (k: string) => void mem.delete(k) }
+  const C = await import('../src/custom.ts')
+  let n = 0; const ctx = { uid: () => 'u' + ++n, now: () => 1 }
+  // 技能
+  let p = await C.proposeTool('skill_save', { name: '会议纪要', prompt: '你把会议录音文字整理成纪要：结论、待办（负责人 + 截止日期）、风险。', icon: 'doc' }, ctx)
+  ok('skill_save 生成待确认卡，不直接写入', p.card?.kind === 'skill' && p.card.status === 'pending' && p.card.op === 'create' && !mem.has('lumi.skills'), p)
+  C.commitCard(p.card!)
+  const sk = JSON.parse(mem.get('lumi.skills')!)
+  ok('确认后保存为自定义技能', sk.length === 1 && sk[0].custom && sk[0].icon === 'doc' && sk[0].name === '会议纪要', sk)
+  ok('skill_list 列出自定义和内置', /会议纪要（自定义）/.test((await C.proposeTool('skill_list', {}, ctx)).text || '') && /润色编辑（内置/.test((await C.proposeTool('skill_list', {}, ctx)).text || ''))
+  const upd = await C.proposeTool('skill_save', { id: sk[0].id, name: '会议纪要 Pro', prompt: sk[0].prompt }, ctx)
+  ok('按 id 修改是 update 卡，带修改前内容', upd.card?.op === 'update' && (upd.card.before as { name: string }).name === '会议纪要')
+  C.commitCard(upd.card!); C.undoCard(upd.card!)
+  ok('撤销修改恢复原名', JSON.parse(mem.get('lumi.skills')!)[0].name === '会议纪要')
+  ok('内置技能不能改', /内置技能/.test((await C.proposeTool('skill_save', { id: 'polish', name: 'x', prompt: '一二三四五六七八九十' }, ctx)).text || ''))
+  ok('提示词太短报错', /太短/.test((await C.proposeTool('skill_save', { name: 'x', prompt: '短' }, ctx)).text || ''))
+  const del = await C.proposeTool('skill_delete', { id: sk[0].id }, ctx)
+  C.commitCard(del.card!)
+  ok('删除技能后为空，撤销后回来', JSON.parse(mem.get('lumi.skills')!).length === 0 && (C.undoCard(del.card!), JSON.parse(mem.get('lumi.skills')!).length === 1))
+  // MCP
+  ok('MCP 地址校验：非 http 协议报错', /只支持 http/.test((await C.proposeTool('mcp_add', { url: 'ftp://a.com/mcp' }, ctx)).text || ''))
+  ok('MCP 地址校验：不是域名报错', !!C.checkMcpUrl('https://abc').error && !C.checkMcpUrl('mcp.example.com/mcp').error && C.checkMcpUrl('mcp.example.com/mcp').url === 'https://mcp.example.com/mcp')
+  ok('MCP http 外网地址给警告', !!C.checkMcpUrl('http://mcp.example.com/mcp').warn && !C.checkMcpUrl('http://192.168.1.5:8080/mcp').warn)
+  p = await C.proposeTool('mcp_add', { url: 'https://mcp.example.com/mcp', token: 'secret' }, { ...ctx, probe: async () => [{ name: 'search' }, { name: 'fetch' }] })
+  ok('mcp_add 测试连接成功，卡上不显示令牌', p.card?.fields.some(f => f.v.startsWith('连接成功，2 个工具')) === true && !JSON.stringify(p.card.fields).includes('secret') && (p.card.after as { status: string }).status === 'ok', p.card?.fields)
+  C.commitCard(p.card!)
+  const p2 = await C.proposeTool('mcp_add', { url: 'https://mcp.example.com/mcp' }, { ...ctx, probe: async () => { throw new Error('HTTP 401') } })
+  ok('同地址再加是更新；连接失败给警告但仍可保存', p2.card?.op === 'update' && (p2.card.warn || []).length === 1 && (p2.card.after as { status: string; token: string }).status === 'error' && (p2.card.after as { token: string }).token === 'secret')
+  const rm = await C.proposeTool('mcp_remove', { id: (p.card!.after as { id: string }).id }, ctx)
+  C.commitCard(rm.card!)
+  ok('mcp_remove 确认后移除', JSON.parse(mem.get('lumi.mcp')!).length === 0)
+  // Flow：按任务生成（ai 步 + for + 参数 + confirm）
+  const task = { app: '小红书', name: '收藏咖啡笔记', steps: [{ kind: 'launch', app: '小红书', pkg: 'com.xingin.xhs' }, { kind: 'ai', goal: '顶部的搜索框', act: 'tap' }, { kind: 'ai', goal: '搜索输入框', act: 'input', text: '{关键词}' }, { kind: 'enter' },
+    { kind: 'for', var: 'i', from: 1, to: '{数量}' }, { kind: 'ai', goal: '第 ${i} 篇笔记', act: 'tap' }, { kind: 'ai', goal: '收藏按钮', act: 'tap', confirm: true }, { kind: 'key', key: 'back' }, { kind: 'endfor' }] }
+  p = await C.proposeTool('flow_save', task, ctx)
+  ok('flow_save 生成确认卡：参数、AI 视觉步数、速度说明', p.card?.kind === 'flow' && p.card.pkg === 'com.xingin.xhs' && p.card.fields.some(f => f.k === '参数' && f.v === '关键词、数量') && p.card.fields.some(f => /AI 视觉 4 步/.test(f.v)) && p.card.fields.some(f => f.k === '速度' && /模型往返/.test(f.v)) && p.card.lines?.filter(l => l[0] === 'ai').length === 3, p.card?.fields)
+  C.commitCard(p.card!)
+  const flows = JSON.parse(mem.get('lumi.flows')!)
+  ok('确认后 Flow 已保存（params 自动提取）', flows.length === 1 && flows[0].params.join() === '关键词,数量' && flows[0].fast === true)
+  ok('校验不通过的 Flow 不出卡，直接把错误还给模型', /校验没通过/.test((await C.proposeTool('flow_save', { app: 'a', name: 'b', steps: [{ kind: 'if', cond: { kind: 'text', text: 'x' } }] }, ctx)).text || ''))
+  ok('更新不存在的 Flow 报错', /没有 id=/.test((await C.proposeTool('flow_save', { id: 'nope', steps: [{ kind: 'enter' }] }, ctx)).text || ''))
+  const fd = await C.proposeTool('flow_delete', { id: flows[0].id }, ctx)
+  C.commitCard(fd.card!); ok('flow_delete 后撤销能恢复', JSON.parse(mem.get('lumi.flows')!).length === 0 && (C.undoCard(fd.card!), JSON.parse(mem.get('lumi.flows')!).length === 1))
+  // 等待确认
+  const w = C.waitDecision('x1'); ok('waitDecision 挂起中', C.isWaiting('x1')); C.decide('x1', true); ok('decide 后返回 true', (await w) === true && !C.isWaiting('x1'))
+  const ac = new AbortController(); const w2 = C.waitDecision('x2', ac.signal); ac.abort(); ok('停止生成时确认卡按取消处理', (await w2) === false)
+}
+
 // 给 Java 的端到端用例（期望的动作序列与 FlowVmTest.FakeHost 的记录格式一致）
 const cases = [
   { name: '类：购物车两次 add 后结算', steps: ex, expect: ['input:饿了么:奶茶', 'input:饿了么:面包', 'tap:结算2'] },

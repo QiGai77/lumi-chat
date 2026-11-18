@@ -5,7 +5,12 @@ import { Phone, isNative } from './phone'
 export interface AppLook { src?: string; hue: number; sat: number; light: number; pkg?: string }
 const K = 'lumi.appicons'
 const cache: Record<string, AppLook> = (() => { try { return JSON.parse(localStorage.getItem(K) || '{}') } catch { return {} } })()
-const persist = () => { try { localStorage.setItem(K, JSON.stringify(cache)) } catch { /* 太大就算了 */ } }
+const persist = () => {
+  try { localStorage.setItem(K, JSON.stringify(cache)) }
+  catch { // 存不下（图标太多）：只存配色，图标下次会话重新向原生要
+    try { localStorage.setItem(K, JSON.stringify(Object.fromEntries(Object.entries(cache).map(([k, v]) => [k, { ...v, src: undefined }])))) } catch { /* */ }
+  }
+}
 
 /** 名字算一个稳定的色相，没有图标时用。 */
 export const nameHue = (s: string) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
@@ -40,26 +45,57 @@ function analyze(src: string): Promise<{ hue: number; sat: number; light: number
   })
 }
 
-const pending: Record<string, Promise<AppLook>> = {}
+const pending: Record<string, Promise<AppLook> | undefined> = {}
+/** 本次会话里已经向原生要过图标的键：没拿到（没装 / 当时读失败）的每个会话最多再试一次，回到前台时再放开一次（可能刚装了应用）。 */
+const tried = new Set<string>()
+const EV = 'lumi-appicon'
+const okSrc = (s?: string) => !!s && /^data:image\/(png|webp|jpeg);base64,.{40,}/.test(s)
+
+/** v0.20：真机上统一用应用的原生启动图标（Phone.appIcon，Java 侧把自适应图标渲染成 PNG）。
+ * 先按包名找，没有包名或包名找不到就按应用名找（原生侧精确 > 包含 > 被包含）；拿到后同时记在包名和应用名两个键下。
+ * 缓存里没有图标的条目在原生上每个会话重试一次，不会永远停在占位图；只有真没装这个应用、或者在网页版，才显示占位方块。 */
 export async function appLook(app: string, pkg?: string): Promise<AppLook> {
   const k = pkg || app
-  if (cache[k] && cache[k].hue != null && (cache[k].src || !isNative)) return cache[k]
+  const c = cache[k]
+  if (c && c.hue != null && (okSrc(c.src) || !isNative || tried.has(k))) return c
   if (!pending[k]) pending[k] = (async () => {
-    let look: AppLook = { hue: nameHue(app), sat: 0.55, light: 0.5 }
-    if (cache[k]?.src) look = { ...cache[k], ...(await analyze(cache[k].src!)) }
-    else if (isNative) try {
-      const r = await Phone.appIcon({ pkg, name: app })
-      look = { src: r.src, pkg: r.pkg, ...(await analyze(r.src)) }
-    } catch { /* 没装这个应用 */ }
-    cache[k] = look; persist(); return look
+    tried.add(k)
+    let look: AppLook = c && c.hue != null ? { ...c } : { hue: nameHue(app), sat: 0.55, light: 0.5 }
+    if (okSrc(c?.src)) look = { ...c, ...(await analyze(c!.src!)) }
+    else if (isNative) {
+      for (const q of pkg ? [{ pkg, name: app }, { name: app }] : [{ name: app }]) {
+        try {
+          const r = await Phone.appIcon(q)
+          if (okSrc(r.src)) { look = { src: r.src, pkg: r.pkg, ...(await analyze(r.src)) }; break }
+        } catch { /* 这个包名 / 名字没找到，换下一个 */ }
+      }
+    }
+    cache[k] = look
+    if (look.src) { if (look.pkg && !cache[look.pkg]?.src) cache[look.pkg] = look; if (app && !cache[app]?.src) cache[app] = look }
+    persist(); pending[k] = undefined
+    try { window.dispatchEvent(new CustomEvent(EV, { detail: [k, app, look.pkg] })) } catch { /* node */ }
+    return look
   })()
-  return pending[k]
+  return pending[k]!
 }
+
+/** 回到前台：之前没拿到图标的条目再试一次（用户可能刚装了应用）。 */
+export function retryMissingIcons() {
+  let n = 0
+  for (const k of [...tried]) if (!okSrc(cache[k]?.src)) { tried.delete(k); n++ }
+  if (n) try { window.dispatchEvent(new CustomEvent(EV, { detail: ['*'] })) } catch { /* */ }
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && isNative) retryMissingIcons() })
 
 export function useAppLook(app: string, pkg?: string) {
   const k = pkg || app
   const [l, setL] = useState<AppLook | undefined>(cache[k]?.hue != null ? cache[k] : undefined)
-  useEffect(() => { let on = true; appLook(app, pkg).then(x => on && setL(x)); return () => { on = false } }, [app, pkg]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const on = (e: Event) => { const d = (e as CustomEvent).detail as string[]; if (d[0] === '*' || d.includes(k) || d.includes(app)) setTick(t => t + 1) }
+    window.addEventListener(EV, on); return () => window.removeEventListener(EV, on)
+  }, [k, app])
+  useEffect(() => { let on = true; appLook(app, pkg).then(x => on && setL(x)); return () => { on = false } }, [app, pkg, tick]) // eslint-disable-line react-hooks/exhaustive-deps
   return l || { hue: nameHue(app), sat: 0.55, light: 0.5 }
 }
 

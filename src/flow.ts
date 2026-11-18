@@ -3,6 +3,7 @@
 import { Phone, isNative } from './phone'
 import { loadSettings } from './api'
 import { visionLocate, type VisionReq } from './vision'
+import { stores } from './custom'
 import { applyLearned, expandCalls, fill, paramsIn, tidy, validateClasses, validateFlow, type Flow, type FlowStep, type Learned, type VarValue } from './flowcore'
 export * from './flowcore'
 
@@ -13,6 +14,8 @@ export const saveFlows = (f: Flow[]) => {
   window.dispatchEvent(new Event('lumi-flows'))
   if (isNative) Phone.folderStatus().then(st => { if (st.linked) Phone.writeText({ path: 'Flow/flows.json', text: JSON.stringify(f, null, 1) }).catch(() => {}) }).catch(() => {})
 }
+// v0.20：对话里的确认卡（custom.ts）也走这里存 Flow，保持同步到手机文件夹
+stores.flows = { load: loadFlows, save: saveFlows }
 export const upsertFlow = (fl: Flow) => { const a = loadFlows(); const i = a.findIndex(x => x.id === fl.id); if (i >= 0) a[i] = fl; else a.unshift(fl); saveFlows(a); return fl }
 
 export interface TraceItem { pc: number; i?: number; fid?: string; label: string; ms: number; src: 'native' | 'cache' | 'vision' | 'coord' | 'logic' | 'skip' | 'fail' }

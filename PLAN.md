@@ -1,5 +1,17 @@
 # 栖语 Lumi v0.7 改动计划（交接文档）
 
+## v0.20（2026-11-18，分支 v017-flow）
+用户需求（原话）：「头像使用app原生图标 还有 支持在聊天里面定制技能，mcp，flow并且flow是结合ai视觉的一套针对任务，新版apk」。保留 v0.19 布局（便当格、钱包叠卡）和白底 + 主题色浅渐变卡面。
+
+- **原生应用图标做头像**：`AppIcon`（flowui.tsx）/ `appLook`（appicon.ts）在真机上统一走 `Phone.appIcon`。改动：先按包名、再按应用名找（原生侧打分：完全相同 > 名字包含 > 被名字包含 ≥2 字，去空白、不分大小写）；拿到后同时记在包名键和应用名键下；缓存里没有图标的条目每个会话重试一次，回到前台（`visibilitychange`）再放开一次（可能刚装了应用），通过 `lumi-appicon` 事件让已挂载的图标刷新；localStorage 存不下时只存配色不存图。Java `PhonePlugin.appIcon` 取启动 Activity 的图标（`getActivityIcon`，和桌面一致），自适应图标（API 26+）手动把背景层 / 前景层按 108/72 放大画进 22% 圆角方形，普通图标按 intrinsic 尺寸等比画进 160px，画出来全透明退回 `Drawable.draw`，输出 PNG data URL。叠卡标题条加了应用图标（右下角小徽标是 Flow 类型）；对话里的 Flow 确认卡 / 运行卡也用应用图标。占位方块只在没装这个应用或网页版出现。
+- **在对话里定制技能 / MCP / Flow**（`src/custom.ts`，纯模块可在 node 里测）：新工具 `skill_list / skill_save / skill_delete`、`mcp_list / mcp_add / mcp_remove`、`flow_delete`，`flow_list / flow_save` 普通对话里也能用，`flow_run` 只在安卓 App 里给。改动类工具不直接写，先生成确认卡（`ChatCard`，挂在 `Step.card` 上，存进对话）：卡上列出要保存的内容（技能的提示词 / 开场白；MCP 的地址、令牌是否填写（不显示内容）、连接测试结果；Flow 的步骤（带「AI 视觉 / 逻辑 / 变量 / 需确认」标签）、参数、速度说明），用户点「保存」才写入，点「取消」把取消告诉模型；保存后可「撤销」（恢复 before，新建的删掉，删除的放回）。工具循环在等确认时挂起（`waitDecision`），停止生成按取消处理；重开 App 后旧的待确认卡显示「已失效」。技能存 `lumi.skills`（内置 6 个不能改删，技能页显示「自定义」标签）；MCP 地址校验（http/https、像域名、外网 http 给警告），用现有 `probeMcp` 测连接（8 秒超时，失败也能保存）；App 监听 `lumi-mcp` 事件刷新 MCP 列表。Flow 保存前跑 `validateFlow + validateClasses`，有错误不出卡，把错误还给模型改。设置里新开关「在对话里定制」（默认开）。系统提示词 `CUSTOM_PROMPT` 告诉模型什么时候用、确认卡怎么回事。
+- **Flow = 按任务生成的 AI 视觉工作流**：`CUSTOM_PROMPT` 里写了生成规则：launch（附常见包名），只在确定时写原生选择器，否则 `ai{goal, act}`；会变的写 `{参数}`，数量用 for；if/exists 处理弹窗；付款 / 下单 / 发送 / 删除加 `confirm:true`；「每天」交给定时任务。入口：Flow 总览「按任务生成」按钮、空状态按钮、新应用弹窗顶部「不想录？按任务生成」、应用页头卡「按任务生成」（预填「在{应用}里」）、对话输入框「+」菜单「按任务生成 Flow」；弹窗里有示例，提交后新开对话发给模型。确认卡保存后有「试跑」（安卓 App）：跑一次，AI 视觉找到的位置自动写回（`applyLearned`），卡上显示结果和运行明细；还有「打开」进编辑器。修了一个写回 bug：目标带 `${变量}` 的 ai 步（循环里的「第 ${i} 篇」）以前会把第一次的选择器写死，现在和带 `{参数}` 的一样不写回（`hasDynamic`）。定时任务的提示词是「运行 Flow「名称」」时直接在手机上跑这个 Flow（不经过模型）。
+- **诚实口径**：确认卡和 README 写明：原生步和已缓存的步约 1 秒一步；AI 视觉步没缓存时每步一次模型往返（几秒）；目标带参数或变量的 AI 步不缓存、每次都走视觉。
+- **版本**：0.20.0（versionCode 21），设置页页脚 v0.20。
+- **截图**：`python3 scripts/v20_shots.py [phone|desktop]` → `design/v20/`：模拟的 `Phone.appIcon` 返回品牌色 PNG（不是真机图标），便当格 / 叠卡 / 编辑器 / 按任务生成弹窗（390 / 360）、技能页（含自定义技能）、MCP 页；对话里拦截 `/v1/chat/completions` 返回工具调用：Flow 确认卡（待确认 → 已保存 → 试跑后写回 2 个选择器）、技能确认卡、MCP 确认卡（连接测试成功 → 保存 → 撤销）；桌面便当格和叠卡。全部无横向溢出、无页面报错。
+- **测试**：`npm run build` 通过；`node scripts/flow-test.mts` 59 项通过（+23：确认卡 / 保存 / 撤销 / 校验 / 等待确认 / ${变量} 不写回）；`scripts/flowvm-test/run.sh` 30 项通过；oxlint 0 错误（19 个旧警告）；Java 用 JDK 21 javac 对 android.jar（API 36）+ Capacitor 8.6.2 / AndroidX / libadb / BouncyCastle 的 jar 编译（除 MainActivity 缺传递依赖、未改动）通过。
+- **未做 / 限制**：没上真机（图标渲染、试跑、确认卡在 WebView 里都没在手机上看过）；MCP 服务器目前只读工具列表，对话里还不会调用 MCP 工具；网页版 MCP 连接测试常被跨域拦住（卡上会提示，仍可保存）。
+
 ## v0.19（2026-11-18，分支 v017-flow，本地提交、未 push）
 用户反馈（07:55）：「v0.18 的卡片布局还不如原版」——近白卡 + 两列平铺不好看；要 Figma Community Riffs 那样的卡片**排布**，图标要回到原版。
 

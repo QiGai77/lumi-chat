@@ -59,9 +59,10 @@ export const PHONE_TOOLS = [
   { name: 'phone_files', desc: '列出项目文件夹里的文件，path 省略则列根目录。', params: { path: { type: 'string', description: '子目录，可省略' } } },
 ] as const
 
-type Name = typeof PHONE_TOOLS[number]['name'] | typeof FLOW_TOOLS[number]['name']
-import { FLOW_TOOLS, runFlowTool } from './flow'
-const ALL = [...PHONE_TOOLS, ...FLOW_TOOLS]
+type Name = typeof PHONE_TOOLS[number]['name'] | typeof FLOW_TOOLS[number]['name'] | typeof CUSTOM_TOOLS[number]['name']
+import { FLOW_TOOLS, loadFlows, runFlowTool } from './flow'
+import { CUSTOM_TOOLS } from './custom'
+const ALL = [...PHONE_TOOLS, ...FLOW_TOOLS, ...CUSTOM_TOOLS]
 export const toolSpecs = (names: readonly string[]) => ALL.filter(t => names.includes(t.name)).map(t => ({
   type: 'function', function: { name: t.name, description: t.desc, parameters: { type: 'object', properties: t.params, required: Object.keys(t.params).filter(k => !/可省略|可省/.test((t.params as Record<string, { description?: string }>)[k].description || '')) } },
 }))
@@ -79,9 +80,18 @@ const LABEL: Record<Name, (a: Record<string, unknown>) => string> = {
   phone_read: a => `读取 ${a.path}`,
   phone_files: a => `查看文件夹${a.path ? ' ' + a.path : ''}`,
   flow_list: () => '查看 Flow',
-  flow_run: a => `运行 Flow ${a.id}`,
+  flow_run: a => `运行 Flow「${loadFlows().find(f => f.id === a.id || f.name === a.id)?.name || a.id}」`,
   flow_save: a => `保存 Flow「${a.name || ''}」`,
+  flow_delete: () => '删除 Flow',
+  skill_list: () => '查看技能',
+  skill_save: a => `保存技能「${a.name || ''}」`,
+  skill_delete: () => '删除技能',
+  mcp_list: () => '查看 MCP 服务器',
+  mcp_add: a => `添加 MCP ${String(a.name || a.url || '').slice(0, 30)}`,
+  mcp_remove: () => '移除 MCP 服务器',
 }
+/** 会操作手机（需要安卓 App）的工具 */
+export const isPhoneTool = (n: string) => n.startsWith('phone_') || n === 'flow_run'
 
 /** 这一轮手机操控实际做过的操作（用来「存成 Flow」）。 */
 export const trace: FlowStep[] = []

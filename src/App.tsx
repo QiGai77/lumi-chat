@@ -6,9 +6,10 @@ import { Markdown } from './md/Markdown'
 import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
-import { AGENTS, agentById, type Agent } from './agents'
+import { allAgents, agentById, type Agent } from './agents'
+import { CUSTOM_NAMES, CUSTOM_PROMPT, MUTATING, commitCard, decide, isWaiting, proposeTool, undoCard, waitDecision, type ChatCard } from './custom'
 import { RpView } from './rp'
-import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
+import { Phone, isNative, isPhoneTool, runTool, takeTrace, toolSpecs, toStep } from './phone'
 import { FAMILIES, meshBg, meshVars, tint, useAppLook } from './appicon'
 import { bentoLayout, bentoOrder, type BentoCell, type BentoSize } from './bento'
 import { flowSummary, loadFlows, runFlow, runSummary, stepLabel, tidy, upsertFlow, type Flow, type RunResult } from './flow'
@@ -100,6 +101,14 @@ export default function App() {
   }
   const update = (id: string, fn: (c: Conv) => Conv) => setConvs(cs => cs.map(c => (c.id === id ? fn(c) : c)))
   const del = (id: string) => { setConvs(cs => cs.filter(c => c.id !== id)); if (openId === id) setOpenId(null) }
+  // v0.20：对话里的确认卡改了 MCP 列表（custom.ts 写 localStorage + 'lumi-mcp' 事件）就重新读；'lumi-go' 跳页面，'lumi-ask' 带一句话新开对话（按任务生成 Flow 等）
+  useEffect(() => {
+    const mcp = () => setServers(loadMcp())
+    const goE = (e: Event) => go((e as CustomEvent).detail as View)
+    const ask = (e: Event) => { setView('home'); newChat({ text: (e as CustomEvent).detail as string, gen: 'chat' }) }
+    window.addEventListener('lumi-mcp', mcp); window.addEventListener('lumi-go', goE); window.addEventListener('lumi-ask', ask)
+    return () => { window.removeEventListener('lumi-mcp', mcp); window.removeEventListener('lumi-go', goE); window.removeEventListener('lumi-ask', ask) }
+  })
 
   // 定时任务：App 打开期间每 30 秒检查一次，到点就在后台新建对话并跑完
   const running = useRef(new Set<string>())
@@ -111,6 +120,17 @@ export default function App() {
     setTasks(ts => ts.map(x => x.id === t.id ? { ...x, lastRun: Date.now(), lastConv: cid } : x))
     setConvs(cs => [{ id: cid, title: t.name, tier, updated: Date.now(), messages: [user, { role: 'assistant', content: '', tier }], task: t.id }, ...cs])
     const set = (m: Partial<Msg>) => setConvs(cs => cs.map(c => c.id === cid ? { ...c, updated: Date.now(), messages: [user, { ...c.messages[1], ...m, role: 'assistant' }] } : c))
+    // v0.20：提示词是「运行 Flow「名称」」时直接在手机上跑这个 Flow（按任务生成的 Flow 配合定时任务实现「每天」）
+    const fm = t.prompt.trim().match(/^运行\s*Flow\s*[「“"]([^」”"]+)[」”"]/)
+    const fl = fm ? loadFlows().find(f => f.name === fm[1] || f.id === fm[1]) : undefined
+    if (fm) {
+      try {
+        if (!fl) set({ content: `没有找到名为「${fm[1]}」的 Flow` })
+        else if (!isNative) set({ content: `Flow「${fl.name}」只能在安卓 App 里运行` })
+        else set({ content: runSummary(await runFlow(fl), fl.name) })
+      } catch (e) { set({ content: '定时任务运行失败：' + (e as Error).message }) }
+      running.current.delete(t.id); return
+    }
     try {
       const r = await streamChat({ settings, tier, think: false, messages: [user], signal: new AbortController().signal, system: settings.genUI ? GENUI_PROMPT : undefined, onDelta: (t2, rs) => set({ content: t2, reasoning: rs }) })
       set({ ms: r.firstTokenMs }); addUsage(0, r.promptTokens + r.completionTokens)
@@ -156,7 +176,7 @@ export default function App() {
                 save={c => setChars(cs => cs.some(x => x.id === c.id) ? cs.map(x => x.id === c.id ? c : x) : [c, ...cs])}
                 remove={() => { setChars(cs => cs.filter(x => x.id !== view.slice(5))); go('chars') }} onChat={c => newChat(undefined, { char: c })} /></>}
               {view === 'skills' && <>{head('技能', '预设好角色和方法，点开就能用')}<Agents onPick={a => newChat(undefined, { agent: a })} /></>}
-              {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<McpPage servers={servers} setServers={setServers} /></>}
+              {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<AskBar kind="mcp" /><McpPage servers={servers} setServers={setServers} /></>}
               {view === 'tasks' && <>{head('定时任务', '到点自动提问，结果存成一段新对话')}<TasksPage tasks={tasks} setTasks={setTasks} onRun={runTask} onOpen={openConv} /></>}
               {view === 'projects' && <>{head('项目', '把相关对话放在一起，共用一套说明')}<ProjectsPage projects={projects} setProjects={setProjects} convs={convs} onOpen={p => go(`project:${p}`)} onImport={(ps, cs) => { setProjects(a => [...a.filter(x => !ps.some(y => y.id === x.id)), ...ps]); setConvs(a => [...cs.filter(c => !a.some(x => x.id === c.id)), ...a].sort((x, y) => y.updated - x.updated)) }} /></>}
               {proj && <>{back('projects', proj.name)}<ProjectPage p={proj} convs={convs.filter(c => c.project === proj.id)}
@@ -459,7 +479,7 @@ function ProjectPage({ p, convs, save, remove, onNew, onOpen }: { p: Project; co
 }
 
 /* ---------------- composer card (home) */
-function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void; phone?: () => void; phoneOn?: boolean }) {
+function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn, onTask }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void; phone?: () => void; phoneOn?: boolean; onTask?: () => void }) {
   return <>
     {show && <div className="gen-scrim" onClick={onClose} />}
     <div className={`gen-menu ${show ? 'show' : ''}`}>
@@ -468,6 +488,7 @@ function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn }: { show:
           <span className="gi"><Icon n={g === 'chat' ? 'chat' : g === 'image' ? 'image' : 'film'} s={18} w={2} /></span>{GEN_LABEL[g]}
           {gen === g && <Icon n="check" s={16} w={2.4} />}
         </button>))}
+      {onTask && <button onClick={() => { onClose(); setGen('chat'); onTask() }}><span className="gi"><Icon n="eye" s={18} w={2} /></span>按任务生成 Flow</button>}
       {phone && <button onClick={() => { onClose(); phone() }}><span className="gi"><Icon n="phone" s={18} w={2} /></span>手机操控{phoneOn && <Icon n="check" s={16} w={2.4} />}</button>}
       <button onClick={() => { onClose(); onMode() }}><span className="gi"><Icon n="spark" s={18} w={2} /></span>选择模式</button>
     </div>
@@ -523,7 +544,7 @@ function Home({ convs, tier, think, setThink, onMode, onSend, onOpen, onDelete }
           <button className={`chip chip-think ${think ? 'on' : ''}`} onClick={() => setThink(!think)} aria-label="深度思考" title="深度思考"><Icon n="spark" s={14} w={2.2} /><span className="chip-tx">深度思考</span></button>
           <button className={`send big ${text.trim() ? 'on' : ''}`} onClick={go} aria-label="发送"><Icon n="up" s={20} c="#fff" w={2.4} /></button>
         </div>
-        <div className="home-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} /></div>
+        <div className="home-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} onTask={() => fill('按任务生成 Flow：')} /></div>
       </div>
       <div className="quick">{QUICK.map(([l, p]) => <button key={l} className="q-chip press" onClick={() => fill(p)}>{l}</button>)}</div>
 
@@ -654,7 +675,7 @@ async function startRecord(a: { label: string; pkg: string }, setMsg: (m: string
   } catch (e) { setMsg((e as Error).message) }
 }
 
-function AppPicker({ onPick, onClose }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void }) {
+function AppPicker({ onPick, onClose, onAsk }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void; onAsk?: () => void }) {
   const [q, setQ] = useState('')
   const [apps, setApps] = useState<{ label: string; pkg: string }[]>([])
   useEffect(() => { if (isNative) Phone.apps({ q }).then(r => setApps(r.apps)).catch(() => {}) }, [q])
@@ -664,6 +685,8 @@ function AppPicker({ onPick, onClose }: { onPick: (a: { label: string; pkg: stri
         <div className="grabber" />
         <div className="t18 b" style={{ marginBottom: 4 }}>录制哪个应用</div>
         <div className="t13" style={{ marginBottom: 12 }}>会自动打开它，顶部出现录制条。照常点一遍，点「完成」回到这里。</div>
+        {onAsk && <button className="ask-bar press-row" onClick={onAsk}><span className="ask-ic"><Icon n="eye" s={16} w={2.2} /></span>
+          <div className="grow"><div className="t15 b">不想录？按任务生成</div><div className="t12">一句话描述要做的事，AI 生成步骤</div></div><Icon n="right" s={15} w={2} c="var(--label3)" /></button>}
         <input className="inp" placeholder="搜索应用" value={q} onChange={e => setQ(e.target.value)} />
         <div className="app-pick">{apps.map(a => <button key={a.pkg} className="ap-item press" onClick={() => onPick(a)}><AppIcon app={a.label} pkg={a.pkg} s={52} /><span className="ell">{a.label}</span></button>)}
           {!isNative && <div className="t13">安卓 App 里会列出手机上的应用</div>}</div>
@@ -707,6 +730,7 @@ const flowMeta = (f: Flow) => `${f.steps.length} 步${f.params.length ? ' · ' +
 function FlowsPage({ go }: { go: (v: View) => void }) {
   const flows = useFlows()
   const [pick, setPick] = useState(false)
+  const [ask, setAsk] = useState(false)
   const R = useRunner()
   useRecordReturn(go, R.setMsg)
   const apps = bentoOrder([...new Set(flows.map(f => f.app))], a => flows.filter(f => f.app === a).length)
@@ -714,18 +738,21 @@ function FlowsPage({ go }: { go: (v: View) => void }) {
   return (
     <section className="fade">
       <div className="f-sum"><span>{apps.length} 个应用 · {flows.length} 个 Flow</span>
+        <button className="gen-btn press" onClick={() => setAsk(true)}><Icon n="eye" s={15} w={2.2} />按任务生成</button>
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
       {R.msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{R.msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
         <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
-        <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
+        <div className="t13">录一遍操作，或者用一句话描述任务让 AI 生成（不认识的界面用 AI 视觉步）。下次点一下就能跑完。</div>
+        <button className="btn-run" style={{ marginTop: 14 }} onClick={() => setAsk(true)}><Icon n="eye" s={15} w={2.2} />按任务生成</button>
       </div> : <div className="bento-wrap"><div className="bento">
         {apps.map((a, i) => <BentoTile key={a} app={a} ph={ph[i]} dk={dk[i]} flows={flows.filter(f => f.app === a)} running={R.running} onRun={R.start} onOpen={() => go(`flowapp:${a}` as View)} />)}
         <button className={`bt add ${ph[apps.length].w > 1 ? 'ph-row' : ''} ${dk[apps.length].w > 1 ? 'dk-row' : ''} press`} style={cellVars(ph[apps.length], dk[apps.length])} onClick={() => setPick(true)}><span className="fa-plus"><Icon n="plus" s={22} w={2.2} /></span><span>新应用</span></button>
       </div></div>}
       {R.ui}
-      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, R.setMsg) }} />}
+      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, R.setMsg) }} onAsk={() => { setPick(false); setAsk(true) }} />}
+      {ask && <AskSheet kind="flow" onClose={() => setAsk(false)} />}
     </section>
   )
 }
@@ -783,6 +810,7 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   const t = tint(look)
   const R = useRunner()
   const [sel, setSel] = useState<string | null>(null)
+  const [ask, setAsk] = useState(false)
   useRecordReturn(go, R.setMsg)
   const total = flows.reduce((n, f) => n + f.runs, 0)
   // 钱包叠卡（参考 Riffs「Five glossy cards, one continuous shuffle」）：卡片重叠，只露出 60px 标题条；点一张抬起展开，显示步骤和运行键。≤2 个时全部展开。
@@ -793,8 +821,10 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
         <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={60} /></span>
         <div className="fh-name">{app}</div>
         <div className="fh-sub">{flows.length} 个 Flow{total ? ` · 运行过 ${total} 次` : ''}</div>
-        <button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, R.setMsg)}><span className="rec-dot" />录制新 Flow</button>
+        <div className="fh-btns"><button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, R.setMsg)}><span className="rec-dot" />录制新 Flow</button>
+          <button className="fh-gen press" onClick={() => setAsk(true)}><Icon n="eye" s={14} w={2.2} />按任务生成</button></div>
       </div>
+      {ask && <AskSheet kind="flow" prefix={`在${app}里`} onClose={() => setAsk(false)} />}
       {R.msg && !R.res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{R.msg}</div>}
       {flows.length > 0 && <div className="deck-h"><span>全部 Flow</span><span className="t12">{flat ? '点运行键直接跑' : '点卡片展开，点运行键直接跑'}</span></div>}
       <div className={`deck ${flat ? 'flat' : ''} ${sel && !flat ? 'has-open' : ''}`}>
@@ -804,7 +834,7 @@ function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
             <div key={f.id} className={`wcard mesh ${on ? 'open' : ''} ${R.running === f.id ? 'busy' : ''}`} style={{ ...meshVars(c, true), zIndex: i + 1 }}>
               <div className="wc-head" role="button" tabIndex={0} aria-expanded={on}
                 onClick={() => !flat && setSel(on ? null : f.id)} onKeyDown={e => { if (!flat && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSel(on ? null : f.id) } }}>
-                <span className="ft-glyph"><Icon n={flowGlyph(f)} s={18} w={2} /></span>
+                <span className="wc-ic"><AppIcon app={f.app} pkg={f.pkg || pkg} s={34} /><span className="wc-gl"><Icon n={flowGlyph(f)} s={10} w={2.4} /></span></span>
                 <div className="grow"><div className="wc-name ell">{f.name}</div><div className="wc-meta ell">{R.running === f.id ? '运行中…' : flowMeta(f)}</div></div>
                 <button className="ft-play press" onClick={e => { e.stopPropagation(); R.start(f) }} aria-label={`运行 ${f.name}`}><Icon n="play" s={13} w={2.6} /></button>
               </div>
@@ -837,13 +867,55 @@ const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替�
 6. 用户让你新建或优化 Flow 时，用 flow_save；选择器优先用 phone_screen 里看到的文字。
 7. 做完后用一两句话告诉用户结果。`
 
+/** v0.20：对话里的确认卡 / 结果卡。技能、MCP、Flow 的保存和删除先在这里确认；保存后可撤销；Flow 可试跑（AI 视觉学到的位置自动存回）。 */
+const CARD_STATUS: Record<ChatCard['status'], string> = { pending: '待确认', saved: '已保存', cancelled: '已取消', undone: '已撤销', running: '运行中…', done: '已完成', failed: '没跑完' }
+const CAT_TAG: Record<string, string> = { ai: 'AI 视觉', logic: '逻辑', var: '变量', cls: '类', confirm: '需确认' }
+function CardView({ c, live, patch }: { c: ChatCard; live: boolean; patch: (p: Partial<ChatCard>) => void }) {
+  const R = useRunner()
+  const waiting = c.status === 'pending' && isWaiting(c.id)
+  const fid = (c.after as { id?: string } | null)?.id || (c.before as { id?: string } | null)?.id
+  const flow = (c.kind === 'flow' || c.kind === 'run') && fid ? loadFlows().find(f => f.id === fid) : undefined
+  const [more, setMore] = useState(false)
+  useEffect(() => { if (R.msg && !R.running) patch({ note: '试跑：' + R.msg }) }, [R.msg, R.running]) // eslint-disable-line react-hooks/exhaustive-deps
+  const st = c.status === 'pending' && !waiting ? '已失效' : c.status === 'saved' && c.op === 'delete' ? '已删除' : CARD_STATUS[c.status]
+  const srv = (c.after || c.before) as McpServer | null
+  const lines = c.lines || []
+  const shown = more ? lines : lines.slice(0, 8)
+  return (
+    <div className={`ccard ${c.kind} st-${c.status} ${waiting ? 'wait' : ''}`}>
+      <div className="cc-head">
+        {c.kind === 'skill' ? <span className={`ag-i ${c.tone || 'coral'}`}><Icon n={c.icon || 'spark'} s={20} w={1.9} /></span>
+          : c.kind === 'mcp' ? <Favicon site={srv?.site || siteOf(srv?.url || '')} status={srv?.status || 'unknown'} />
+            : <AppIcon app={c.app || ''} pkg={c.pkg} s={40} />}
+        <div className="grow"><div className="cc-t">{c.title}</div><div className="cc-n ell">{c.name}</div>{c.sub && <div className="cc-s ell">{c.sub}</div>}</div>
+        <span className={`cc-st ${c.status === 'pending' && !waiting ? 'expired' : ''}`}>{st}</span>
+      </div>
+      {c.fields.length > 0 && <dl className="cc-kv">{c.fields.map(f => <div key={f.k}><dt>{f.k}</dt><dd>{f.v}</dd></div>)}</dl>}
+      {lines.length > 0 && <ol className="cc-steps">{shown.map(([cat, t], k) => <li key={k} className={`cat-${cat}`}><span className="cc-no">{k + 1}</span><span className="grow">{t}</span>{CAT_TAG[cat] && <span className="cc-tag">{CAT_TAG[cat]}</span>}</li>)}
+        {lines.length > 8 && <li className="cc-more"><button onClick={() => setMore(!more)}>{more ? '收起' : `展开全部 ${lines.length} 步`}</button></li>}</ol>}
+      {c.warn?.length ? <ul className="cc-warn">{c.warn.map(w => <li key={w}>{w}</li>)}</ul> : null}
+      {c.note && <div className={`cc-note ${c.status === 'failed' ? 'bad' : ''}`}>{c.note}</div>}
+      {waiting && <div className="cc-btns"><button className="btn-ghost press" onClick={() => decide(c.id, false)}>取消</button>
+        <button className={`cc-ok press ${c.op === 'delete' ? 'danger' : ''}`} onClick={() => decide(c.id, true)}><Icon n={c.op === 'delete' ? 'trash' : 'check'} s={15} w={2.4} />{c.op === 'delete' ? '删除' : '保存'}</button></div>}
+      {!live && (c.status === 'saved' || ((c.status === 'done' || c.status === 'failed') && flow)) && <div className="cc-btns">
+        {c.status === 'saved' && <button className="btn-ghost press" onClick={() => patch({ status: 'undone', note: undoCard(c) })}><Icon n="redo" s={14} w={2.2} />撤销</button>}
+        {flow && c.op !== 'delete' && <button className="btn-ghost press" onClick={() => window.dispatchEvent(new CustomEvent('lumi-go', { detail: `flow:${flow.id}` }))}><Icon n="pen" s={14} w={2.2} />打开</button>}
+        {flow && c.kind === 'flow' && c.op !== 'delete' && <button className="cc-ok press" disabled={!isNative || !!R.running} title={isNative ? '' : '需要安卓 App'} onClick={() => R.start(flow)}>
+          <Icon n="play" s={13} w={2.6} />{R.running ? '试跑中…' : isNative ? '试跑' : '试跑（需安卓 App）'}</button>}
+      </div>}
+      {R.ui}
+    </div>
+  )
+}
+
 function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
   const [open, setOpen] = useState(false)
   const cur = steps[steps.length - 1]
+  const phone = steps.some(x => isPhoneTool(x.name))
   return (
     <div className="steps">
-      <button onClick={() => setOpen(!open)}><Icon n="phone" s={15} w={2} />
-        <span className="grow ell">{live && cur ? (cur.result === undefined ? `正在${cur.label}…` : cur.label) : `操作了手机 · ${steps.length} 步`}</span>
+      <button onClick={() => setOpen(!open)}><Icon n={phone ? 'phone' : 'bolt'} s={15} w={2} />
+        <span className="grow ell">{live && cur ? (cur.result === undefined ? `正在${cur.label}…` : cur.label) : phone ? `操作了手机 · ${steps.length} 步` : `用了 ${steps.length} 个工具`}</span>
         <Icon n="down" s={14} w={2.2} /></button>
       {open && <ol>{steps.map((st, i) => (
         <li key={i} className={st.ok === false ? 'bad' : ''}><span className="sd"><Icon n={st.ok === false ? 'x' : 'check'} s={11} w={2.8} /></span>
@@ -1065,13 +1137,58 @@ function CharEdit({ c, save, remove, onChat }: { c: Character; save: (c: Charact
   )
 }
 
+function useSkills() {
+  const [a, setA] = useState<Agent[]>(allAgents)
+  useEffect(() => { const on = () => setA(allAgents()); window.addEventListener('lumi-skills', on); return () => window.removeEventListener('lumi-skills', on) }, [])
+  return a
+}
+
+/** v0.20：「在对话里定制」入口。点开写一句话（或点示例），新开一段对话发给模型，模型用工具生成，并在对话里弹确认卡。 */
+const ASK: Record<'skill' | 'mcp' | 'flow', { btn: string; title: string; hint: string; ph: string; ex: string[]; wrap: (t: string) => string }> = {
+  skill: { btn: '用对话定制技能', title: '描述你想要的技能', hint: '说清楚它扮演谁、怎么做、输出什么格式。生成后会弹出确认卡，点「保存」才会加到技能里。', ph: '比如：帮我做个技能，把会议录音整理成纪要和待办',
+    ex: ['帮我做个技能：小红书文案助手，标题带数字，正文分段，结尾 5 个话题标签', '帮我做个技能：英文邮件回复，语气礼貌简洁，先给中文要点再给英文全文'], wrap: t => /技能/.test(t) ? t : '帮我做个技能：' + t },
+  mcp: { btn: '用对话添加 MCP', title: '添加 MCP 服务器', hint: '贴上 Streamable HTTP 地址（和令牌，如果有）。会先测试连接、读取工具，再弹确认卡。', ph: '比如：加一个 MCP https://mcp.example.com/mcp',
+    ex: ['加一个 MCP：https://mcp.deepwiki.com/mcp'], wrap: t => /mcp/i.test(t) ? t : '加一个 MCP：' + t },
+  flow: { btn: '按任务生成', title: '按任务生成 Flow', hint: '用一句话描述手机上要做的事。AI 生成步骤：知道的界面走原生选择器，不认识的界面用 AI 视觉步（第一次要截图问模型，找到后存回，之后走原生）。',
+    ph: '比如：每天帮我在小红书收藏前5篇南京咖啡笔记', ex: ['每天帮我在小红书收藏前5篇南京咖啡笔记', '在美团搜索{店名}，把招牌菜加入购物车，停在结算页', '打开微信，把{内容}发给文件传输助手'],
+    wrap: t => `按任务生成 Flow：${t}\n（不认识的界面用 AI 视觉步，会变的内容做成 {参数}，付款、发送类步骤加确认。）` },
+}
+const askChat = (text: string) => window.dispatchEvent(new CustomEvent('lumi-ask', { detail: text }))
+function AskSheet({ kind, prefix = '', onClose }: { kind: keyof typeof ASK; prefix?: string; onClose: () => void }) {
+  const a = ASK[kind]
+  const [t, setT] = useState(prefix)
+  const go = (x: string) => { if (!x.trim()) return; onClose(); askChat(a.wrap(x.trim())) }
+  return (
+    <div className="sheet-back" onClick={onClose}>
+      <div className="sheet fsheet ask-sheet" onClick={e => e.stopPropagation()}>
+        <div className="grabber" />
+        <div className="t18 b" style={{ marginBottom: 4 }}>{a.title}</div>
+        <div className="t13" style={{ marginBottom: 12 }}>{a.hint}</div>
+        <textarea className="inp ask-in" rows={3} autoFocus placeholder={a.ph} value={t} onChange={e => setT(e.target.value)} />
+        <div className="ask-ex">{a.ex.map(x => <button key={x} className="chip press" onClick={() => go(x)}>{x}</button>)}</div>
+        <button className="btn-run" disabled={!t.trim()} onClick={() => go(t)}><Icon n="spark" s={15} w={2.2} />去对话里生成</button>
+      </div>
+    </div>
+  )
+}
+function AskBar({ kind }: { kind: keyof typeof ASK }) {
+  const [open, setOpen] = useState(false)
+  return <>
+    <button className="ask-bar press-row" onClick={() => setOpen(true)}><span className="ask-ic"><Icon n="spark" s={16} w={2.2} /></span>
+      <div className="grow"><div className="t15 b">{ASK[kind].btn}</div><div className="t12">{ASK[kind].ph}</div></div><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+    {open && <AskSheet kind={kind} onClose={() => setOpen(false)} />}
+  </>
+}
+
 function Agents({ onPick }: { onPick: (a: Agent) => void }) {
+  const list = useSkills()
   return (
     <section className="fade">
-      <div className="agents">{AGENTS.map(a => (
+      <AskBar kind="skill" />
+      <div className="agents">{list.map(a => (
         <button key={a.id} className={`agent ${a.tone} press-row`} onClick={() => onPick(a)}>
           <span className="ag-i"><Icon n={a.icon} s={22} w={1.9} /></span>
-          <div className="grow"><div className="ag-n">{a.name}</div><div className="t13">{a.desc}</div></div>
+          <div className="grow"><div className="ag-n">{a.name}{a.custom && <span className="ag-tag">自定义</span>}</div><div className="t13">{a.desc}</div></div>
           <Icon n="right" s={16} w={2} c="var(--label3)" />
         </button>))}
       </div>
@@ -1104,10 +1221,14 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
   const composing = useRef(false)
+  const taRef = useRef<HTMLTextAreaElement>(null)
   const agent = agentById(conv.agent)
   const char = charById(conv.char)
   const folder = project?.folder
-  const toolNames = [...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell', 'flow_list', 'flow_run', 'flow_save'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : [])]
+  // v0.20：普通对话（非角色扮演）也带定制工具：技能 / MCP / Flow 的查看、保存（确认卡）、删除；flow_run 只在安卓 App 里有
+  const custom = !char && settings.chatCustom !== false
+  const toolNames = [...new Set([...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell', 'flow_list', 'flow_run', 'flow_save'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : []),
+    ...(custom ? CUSTOM_NAMES.filter(n => n !== 'flow_run' || isNative) : [])])]
   const rpUser = settings.rpUser || '用户'
   useEffect(() => { if (pinned.current) scroller.current?.scrollTo({ top: 1e9 }) }, [conv.messages])
 
@@ -1143,7 +1264,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
     let thinkMs = 0
     const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '',
       conv.phone ? PHONE_PROMPT + '\n\n用户保存的 Flow：\n' + flowSummary(loadFlows()) : '', folder ? `这个项目绑定了手机里的文件夹「${folder}」。用户要你写文件、做网页或保存内容时，用 phone_save 存进去（路径相对这个文件夹，比如 pages/index.html），存完告诉用户文件名。` : '',
-      settings.genUI && !conv.phone ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+      settings.genUI && !conv.phone ? GENUI_PROMPT : '', custom ? CUSTOM_PROMPT + (conv.phone ? '' : '\n\n用户保存的 Flow：\n' + flowSummary(loadFlows())) + (isNative ? '' : '\n\n（现在是网页版：可以保存 Flow，但不能运行，运行要在安卓 App 里。）') : ''].filter(Boolean).join('\n\n') || undefined
     if (toolNames.length && !char) { await agentLoop(base, system); return }
     try {
       const r = await streamChat({
@@ -1159,6 +1280,32 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
       if ((e as Error).name === 'AbortError') setLast(m => ({ ...m, stopped: true }))
       else setErr(friendly(e))
     } finally { setBusy(false); ctrl.current = null }
+  }
+  /** 执行一个工具。v0.20：保存 / 删除类先在对话里放确认卡，等用户点「保存」或「取消」；flow_run 附一张运行卡（应用图标 + 结果）。 */
+  const exec = async (name: string, args: Record<string, unknown>, steps: Step[]): Promise<string> => {
+    const show = (card: ChatCard) => { steps[steps.length - 1] = { ...steps[steps.length - 1], card }; update(c => { const m = [...c.messages]; m[m.length - 1] = { ...m[m.length - 1], steps: [...steps] }; return { ...c, messages: m } }) }
+    if (CUSTOM_NAMES.includes(name) && name !== 'flow_run' && name !== 'flow_list') {
+      const p = await proposeTool(name, args, { probe: probeMcp })
+      if (!p.card) return p.text || '出错了：没有结果'
+      show(p.card)
+      if (!MUTATING.has(name)) return p.text || ''
+      const ok = await waitDecision(p.card.id, ctrl.current?.signal)
+      if (!ok) { show({ ...p.card, status: 'cancelled' }); if (ctrl.current?.signal.aborted) throw new DOMException('stop', 'AbortError'); return '用户点了「取消」，没有保存。不要再提交同样的内容，问用户想怎么改。' }
+      const res = commitCard(p.card)
+      show({ ...p.card, status: 'saved' })
+      return res
+    }
+    if (name === 'flow_list') return runTool(name, args, folder)
+    if (isPhoneTool(name) && !isNative) return '出错了：只有安卓 App 里才能操作手机或运行 Flow'
+    if (name === 'flow_run') {
+      const f = loadFlows().find(x => x.id === args.id || x.name === args.id)
+      const card: ChatCard = { id: uid(), kind: 'run', op: 'run', title: '运行 Flow', name: f?.name || String(args.id), sub: f?.app, app: f?.app, pkg: f?.pkg, fields: [], status: 'running', before: null, after: f ? { id: f.id } : null }
+      if (f) show(card)
+      const out = await runTool(name, args, folder)
+      if (f) show({ ...card, status: /^Flow\s*「[^」]*」完成/.test(out) ? 'done' : 'failed', note: out.split('\n')[0].replace(/^Flow\s*/, '').replace(/。$/, '') })
+      return out
+    }
+    return runTool(name, args, folder)
   }
   /** 工具循环：模型要调用工具就执行，把结果喂回去，直到给出最终回答（最多 30 步）。 */
   const agentLoop = async (base: Msg[], system?: string) => {
@@ -1184,8 +1331,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
           steps.push({ ...toStep(tc.function.name, args, '', true), result: undefined })
           update(c => ({ ...c, messages: [...base, { role: 'assistant', content: r.text, tier, steps: [...steps] }] }))
           if (ctrl.current?.signal.aborted) throw new DOMException('stop', 'AbortError')
-          const out = isNative ? await runTool(tc.function.name, args, folder) : '出错了：只有安卓 App 里才能操作手机'
-          steps[steps.length - 1] = toStep(tc.function.name, args, out, !out.startsWith('出错了') && !/失败|没打开|不能/.test(out.slice(0, 12)))
+          const out = await exec(tc.function.name, args, steps)
+          steps[steps.length - 1] = { ...toStep(tc.function.name, args, out, !out.startsWith('出错了') && !/失败|没打开|不能/.test(out.slice(0, 12))), card: steps[steps.length - 1].card }
           raw.push({ role: 'tool', tool_call_id: tc.id, content: out })
           if (/^phone_(tap|open_app|key|swipe|scroll|input)$/.test(tc.function.name)) await new Promise(ok => setTimeout(ok, 700))
         }
@@ -1204,6 +1351,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
     if (pending && !started.current) { started.current = true; const p = pending; clearPending(); send(undefined, p.text, p.gen) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const regen = () => { const m = conv.messages; if (m.length >= 2 && !m[m.length - 1].media) send(m.slice(0, -1)) }
+  const patchCard = (i: number, id: string, p: Partial<ChatCard>) => update(c => ({ ...c, messages: c.messages.map((m, j) => j !== i ? m : { ...m, steps: m.steps?.map(st => st.card?.id === id ? { ...st, card: { ...st.card, ...p } } : st) }) }))
   const toggleFav = (i: number) => update(c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: !m.fav } : m) }))
   const last = conv.messages.length - 1
   const greets = char ? greetings(char, rpUser) : []
@@ -1230,6 +1378,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
                 {m.steps?.length ? <Steps steps={m.steps} live={busy && i === last} /> : null}
+                {m.steps?.filter(st => st.card).map(st => <CardView key={st.card!.id} c={st.card!} live={busy && i === last} patch={p => patchCard(i, st.card!.id, p)} />)}
                 {m.trace && !busy && <button className="flow-save" onClick={() => { const tr = m.trace; update(c => ({ ...c, messages: c.messages.map((x, j) => j === i ? { ...x, trace: undefined } : x) })); send(undefined, `把刚才这次操作整理成一个 Flow，用 flow_save 保存。去掉多余和失败的步骤，会变的内容（搜索词、地址、商品名等）改成 {参数}，付款或提交、发送的步骤加 confirm。实际执行过的步骤：\n${JSON.stringify(tr)}`) }}>
                   <Icon n="bolt" s={15} w={2} />存成 Flow，下次一键运行</button>}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : char ? <RpView src={runRegex(m.content, char, 'ai', 'display', rpUser)} streaming={busy && i === last} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
@@ -1255,13 +1404,14 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onN
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>
-      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} phone={char ? undefined : () => update(c => ({ ...c, phone: !c.phone }))} phoneOn={conv.phone} /></div>
+      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} phone={char ? undefined : () => update(c => ({ ...c, phone: !c.phone }))} phoneOn={conv.phone}
+        onTask={char || settings.chatCustom === false ? undefined : () => { const v = '按任务生成 Flow：'; setText(v); requestAnimationFrame(() => { const el = taRef.current; if (el) { el.focus(); el.setSelectionRange(v.length, v.length) } }) }} /></div>
       <div className="composer">
         <Glass className="c-field" radius={28}>
           <button className={`c-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={21} w={2} /></button>
           {conv.phone && <button className="gen-chip" onClick={() => update(c => ({ ...c, phone: false }))}><Icon n="phone" s={14} w={2.2} />手机操控<Icon n="x" s={12} w={2.4} /></button>}
           {gen !== 'chat' && <button className="gen-chip" onClick={() => setGen('chat')}><Icon n={gen === 'image' ? 'image' : 'film'} s={14} w={2.2} />{GEN_LABEL[gen]}<Icon n="x" s={12} w={2.4} /></button>}
-          <textarea rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
+          <textarea ref={taRef} rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
             onCompositionStart={() => (composing.current = true)} onCompositionEnd={() => (composing.current = false)}
             onChange={e => { setText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px' }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !composing.current && window.innerWidth > 700) { e.preventDefault(); if (!busy) send() } }} />
@@ -1459,6 +1609,9 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="row"><span className="ico"><Icon n="spark" s={16} w={2} /></span>
           <div className="grow"><div className="t16">卡片式回答</div><div className="t13">数据、步骤、对比用界面卡片展示</div></div>
           <Toggle on={s.genUI} set={b => set({ ...s, genUI: b })} /></div>
+        <div className="row"><span className="ico"><Icon n="bolt" s={16} w={2} /></span>
+          <div className="grow"><div className="t16">在对话里定制</div><div className="t13">说一句就能新建技能、MCP、Flow，保存前弹确认卡</div></div>
+          <Toggle on={s.chatCustom !== false} set={b => set({ ...s, chatCustom: b })} /></div>
       </div>
       <div className="sec">外观</div>
       <div className="list">
@@ -1492,7 +1645,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.19 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.20 · 开源 MIT</div>
     </section>
   )
 }

@@ -459,6 +459,8 @@ export const paramsIn = (steps: FlowStep[]) => [...new Set(steps.flatMap(s =>
   [s.text, s.value, s.goal, s.sel?.text, s.sel?.desc, s.cond?.text, s.cond?.value, typeof s.from === 'string' ? s.from : '', typeof s.to === 'string' ? s.to : '', ...Object.values(s.args || {})]
     .join(' ').match(PARAM) || []).map(x => x.slice(1, -1)))]
 export const hasParam = (s: FlowStep) => paramsIn([s]).length > 0
+/** v0.20：目标或文字里带 ${变量}（比如循环里的「第 ${i} 篇笔记」）的步每次指向不同元素，学到的选择器也不能写死。 */
+export const hasDynamic = (s: FlowStep) => /\$\{/.test([s.goal, s.text, s.sel?.text, s.sel?.desc].join(' '))
 
 /** 录制结果清理：合并重复滚动、去掉空输入、补上应用名。 */
 export function tidy(steps: FlowStep[], app?: string): FlowStep[] {
@@ -477,7 +479,7 @@ export function tidy(steps: FlowStep[], app?: string): FlowStep[] {
   return out
 }
 
-/** 运行结果里 AI 视觉学到的位置：写回对应 Flow / 类方法的那一步。带 {参数} 的步不写（选择器会把某次的参数值写死）。返回写回了几步。 */
+/** 运行结果里 AI 视觉学到的位置：写回对应 Flow / 类方法的那一步。带 {参数} 或 ${变量} 的步不写（选择器会把某次的值写死）。返回写回了几步。 */
 export interface Learned { fid: string; i: number; sel?: Sel; x?: number; y?: number }
 export function applyLearned(all: Flow[], learned: Learned[]): number {
   let n = 0
@@ -492,7 +494,7 @@ export function applyLearned(all: Flow[], learned: Learned[]): number {
       steps = m.steps
     }
     const s = steps[l.i]
-    if (!s || (s.kind !== 'ai' && !(s.kind === 'tap' && s.vision)) || hasParam(s)) continue
+    if (!s || (s.kind !== 'ai' && !(s.kind === 'tap' && s.vision)) || hasParam(s) || hasDynamic(s)) continue
     if (l.sel && Object.keys(l.sel).length) s.sel = l.sel
     if (l.x != null && l.y != null) { s.x = l.x; s.y = l.y }
     f.updated = Date.now()
