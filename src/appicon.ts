@@ -83,11 +83,16 @@ export const meshBg = (f: { deep: string; mid: string; hi: string }) =>
   `radial-gradient(85% 70% at 100% 0%, ${f.hi}cc 0%, ${f.hi}00 62%), radial-gradient(70% 55% at 12% 6%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(110% 90% at 0% 100%, ${f.deep} 0%, ${f.deep}00 72%), linear-gradient(160deg, ${f.mid} 0%, ${f.deep} 100%)`
 export const meshTop = (f: { deep: string; mid: string; hi: string }) =>
   `radial-gradient(80% 90% at 100% 100%, ${f.hi}b3 0%, ${f.hi}00 60%), radial-gradient(70% 60% at 88% 92%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(120% 70% at 0% 0%, ${f.deep} 0%, ${f.deep}00 75%), linear-gradient(175deg, ${f.deep} 0%, ${f.deep} 30%, ${f.mid} 100%)`
+/** v0.20：卡面改成白底 + 一点对应主题色的浅渐变（右上角 soft 色晕，往右下渐入），字用墨色。 */
+export const lightBg = (f: { mid: string; hi: string; soft: string }) =>
+  `radial-gradient(90% 75% at 100% 0%, ${f.soft} 0%, ${f.soft}00 70%), radial-gradient(60% 50% at 100% 0%, ${f.hi}38 0%, ${f.hi}00 70%), linear-gradient(165deg, #FFFFFF 0%, #FFFFFF 45%, ${f.soft}99 100%)`
+export const lightTop = (f: { mid: string; hi: string; soft: string }) =>
+  `radial-gradient(110% 60% at 0% 0%, ${f.soft} 0%, ${f.soft}00 75%), radial-gradient(50% 40% at 0% 0%, ${f.hi}33 0%, ${f.hi}00 70%), linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 100%)`
 export function tint(l: AppLook, shift = 0) {
   const base = l.sat < 0.18 ? -1 : familyOf((l.hue + 360) % 360)
   const step = Math.round(shift / 18)
   const f = base < 0 ? (step ? FAMILIES[(4 + step + 80) % 8] : GRAPHITE) : FAMILIES[(base + step + 80) % 8]
-  return { fg: '#FFFFFF', bg: meshBg(f), top: meshTop(f), glow: f.deep + '66', solid: f.mid, soft: f.soft, ink: f.deep, icon: meshBg(f), family: f.name }
+  return { fg: '#141A26', bg: lightBg(f), top: lightTop(f), glow: f.deep + '66', solid: f.mid, soft: f.soft, ink: f.deep, icon: meshBg(f), family: f.name }
 }
 
 /** 卡片的 CSS 变量：背景 + --glow 阴影光晕、--ink 深色（白底上的强调字、播放键底色）、--acc-soft 浅底。top=true 用文字在上的 mesh。 */

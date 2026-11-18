@@ -1186,3 +1186,32 @@ button.row:active{background:rgba(20,26,38,.03);transform:none}
 .bt.add.ph-row .fa-plus{width:40px;height:40px;border-radius:13px}
 /* 叠卡：后一张卡顶边向上投一层柔影，像实体卡片压在前一张上 */
 .deck:not(.flat) .wcard+.wcard{box-shadow:inset 0 1px 0 rgba(255,255,255,.42),inset 0 0 0 1px rgba(255,255,255,.12),0 -8px 22px -12px rgba(30,10,5,.4),0 18px 34px -18px var(--glow),0 40px 70px -46px var(--glow)}
+
+/* =====================================================================================
+   v0.20 卡片背景：白底 + 一点对应主题色的浅渐变（tint() 的 lightBg / lightTop），墨色字。
+   去掉黑纱、颗粒和大号水印字（bt-mark / wc-no），阴影改成发丝描边 + 带主题色的柔影。布局沿用 v0.19。
+   ===================================================================================== */
+.bt.mesh,.wcard.mesh,.fhero.mesh,.fe-head.mesh,.fapp.mesh,.ftile.mesh{color:#141a26;
+  box-shadow:inset 0 0 0 1px rgba(20,26,38,.06),0 1px 2px rgba(20,26,38,.05),0 14px 30px -18px var(--glow),0 30px 60px -44px var(--glow)}
+.bt.mesh::before,.wcard.mesh::before,.fhero.mesh::before,.fe-head.mesh::before,.fapp.mesh::before,.ftile.mesh::before,.bt.hero.mesh::before{content:none}
+.fapp.mesh::after,.ftile.mesh:not(.busy)::after,.fhero.mesh::after{content:none}
+.deck:not(.flat) .wcard+.wcard{box-shadow:inset 0 0 0 1px rgba(20,26,38,.06),0 -6px 18px -12px rgba(20,26,38,.22),0 14px 30px -18px var(--glow)}
+.bt-mark,.wc-no{display:none}
+.wc-face{justify-content:flex-end}
+/* 文字 */
+.mesh .fa-name,.mesh .fh-name,.mesh .ft-name,.bh-name,.wc-name,.fe-head.mesh .fe-name{color:#141a26;text-shadow:none}
+.mesh .fa-sub,.mesh .fh-sub,.mesh .ft-meta,.bh-sub,.wc-meta,.fe-head.mesh .fe-app{color:#5c6270}
+.fe-head.mesh input::placeholder{color:#8a909c}
+.wc-head{color:#141a26}
+/* 图标底、按钮、胶囊 */
+.mesh .fa-ring,.mesh .fh-ring{background:#fff;box-shadow:0 0 0 1px rgba(20,26,38,.06),0 6px 14px -8px rgba(20,26,38,.25)}
+.mesh .fa-n{background:var(--acc-soft);color:var(--ink)}
+.mesh .ft-glyph,.bh-go{background:var(--acc-soft);color:var(--ink);box-shadow:none}
+.mesh .ft-more{background:var(--acc-soft);color:var(--ink)}
+.mesh .fh-rec{background:var(--ink);color:#fff;box-shadow:0 8px 18px -10px var(--ink)}
+.wcard .ft-play{background:var(--ink);color:#fff;box-shadow:0 6px 14px -8px var(--ink)}
+.bt-pill{background:#fff;color:var(--ink);box-shadow:inset 0 0 0 1px rgba(20,26,38,.08),0 4px 10px -6px rgba(20,26,38,.2)}
+.wc-hint{color:var(--ink);background:var(--acc-soft)}
+.bh-list,.wc-in{background:rgba(255,255,255,.88)}
+.bh-list,.wcard.open .wc-in{box-shadow:inset 0 0 0 1px rgba(20,26,38,.06),0 6px 16px -12px rgba(20,26,38,.18)}
+.mesh .ft-play{background:var(--ink);color:#fff;box-shadow:0 6px 14px -8px var(--ink)}
