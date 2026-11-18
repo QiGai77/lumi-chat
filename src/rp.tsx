@@ -125,7 +125,7 @@ function HtmlFrame({ html, done }: { html: string; done: boolean }) {
   const [h, setH] = useState(60)
   const doc = useMemo(() => {
     const clean = html.replace(/<script[\s\S]*?(<\/script>|$)/gi, '').replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><base target="_blank"><style>html,body{margin:0;padding:0;background:transparent;font:15px/1.6 -apple-system,"PingFang SC","Noto Sans SC","Noto Sans CJK SC",sans-serif;color:#141a26;word-break:break-word;overflow:hidden}img,video{max-width:100%;height:auto}table{border-collapse:collapse;max-width:100%}*{box-sizing:border-box;max-width:100%}details>summary{cursor:pointer}</style></head><body><div id="lumi-root" style="display:flow-root">${clean}</div></body></html>`
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><base target="_blank"><style>html,body{margin:0;padding:0;background:transparent;font:15px/1.6 "Anthropic Sans","Hanken Grotesk","Noto Serif SC","Noto Serif CJK SC","Source Han Serif SC","Songti SC",serif;color:#141a26;word-break:break-word;overflow:hidden}img,video{max-width:100%;height:auto}table{border-collapse:collapse;max-width:100%}*{box-sizing:border-box;max-width:100%}details>summary{cursor:pointer}</style></head><body><div id="lumi-root" style="display:flow-root">${clean}</div></body></html>`
   }, [html])
   useEffect(() => {
     const f = ref.current; if (!f) return

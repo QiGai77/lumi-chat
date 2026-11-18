@@ -1,4 +1,8 @@
 const P: Record<string, string> = {
+  layers: '<path stroke-linejoin="round" d="M12 3.5l8.5 4.3-8.5 4.3-8.5-4.3z"/><path stroke-linejoin="round" d="M3.5 12l8.5 4.3 8.5-4.3M3.5 16.2l8.5 4.3 8.5-4.3"/>',
+  merge: '<path d="M6 4v4.5c0 2 1.5 3.5 3.5 3.5h5c2 0 3.5 1.5 3.5 3.5V20"/><path d="M18 4v4.5c0 2-1.5 3.5-3.5 3.5"/><path d="M15.5 17.5L18 20l2.5-2.5"/>',
+  checks: '<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.2l2.8 2.8 5.2-5.6"/>',
+  rec: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.6" fill="currentColor" stroke="none"/>',
   phone: '<rect x="6" y="2.8" width="12" height="18.4" rx="3.2"/><path d="M10.5 18h3"/>',
   download: '<path d="M12 3.8v11.7M7.8 11.3l4.2 4.2 4.2-4.2"/><path d="M20.5 15v1.8c0 2.3-1.6 3.7-4 3.7H7.5c-2.4 0-4-1.4-4-3.7V15"/>',
   monitor: '<rect x="2.8" y="4" width="18.4" height="12.6" rx="2.6"/><path d="M8.5 20.2h7M12 16.6v3.6"/>',
@@ -55,6 +59,15 @@ const P: Record<string, string> = {
   plug: '<path d="M9 2.8v4.4M15 2.8v4.4"/><path d="M5.8 7.2h12.4v3.6c0 3.4-2.8 6.2-6.2 6.2s-6.2-2.8-6.2-6.2z"/><path d="M12 17v4.2"/>',
   side: '<path fill-rule="evenodd" d="M16.3 2.8H7.7c-3 0-4.9 2.1-4.9 5.1v8.2c0 3 1.9 5.1 4.9 5.1h8.6c3 0 4.9-2.1 4.9-5.1V7.9c0-3-1.9-5.1-4.9-5.1z"/><path d="M9.2 2.9v18.2"/>',
   crown: '<path fill-rule="evenodd" d="M3.5 8.6l3.8 3.2 3.9-6.3c.4-.6 1.2-.6 1.6 0l3.9 6.3 3.8-3.2c.6-.5 1.5 0 1.4.8l-1.3 8.4c-.2 1.5-1.5 2.6-3 2.6H6.4c-1.5 0-2.8-1.1-3-2.6L2.1 9.4c-.1-.8.8-1.3 1.4-.8z"/>',
+  branch: '<circle cx="6" cy="5.5" r="2.2"/><circle cx="6" cy="18.5" r="2.2"/><circle cx="18" cy="8.5" r="2.2"/><path d="M6 7.7v8.6M18 10.7c0 3.6-3.4 4.6-9.6 6.6"/>',
+  repeat: '<path d="M4.5 11.5V10a4 4 0 0 1 4-4H19M16 3l3 3-3 3"/><path d="M19.5 12.5V14a4 4 0 0 1-4 4H5M8 21l-3-3 3-3"/>',
+  cube: '<path fill-rule="evenodd" d="M12 2.8l8 4.5v9.4l-8 4.5-8-4.5V7.3z"/><path d="M4.3 7.4L12 11.8l7.7-4.4M12 11.8v9.2"/>',
+  eye: '<path fill-rule="evenodd" d="M2.5 12c2.2-4.3 5.4-6.5 9.5-6.5s7.3 2.2 9.5 6.5c-2.2 4.3-5.4 6.5-9.5 6.5S4.7 16.3 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  braces: '<path d="M8.5 4C6.6 4 6 5 6 6.6v2.6C6 10.6 5.4 11.6 4 12c1.4.4 2 1.4 2 2.8v2.6C6 19 6.6 20 8.5 20M15.5 4c1.9 0 2.5 1 2.5 2.6v2.6c0 1.4.6 2.4 2 2.8-1.4.4-2 1.4-2 2.8v2.6c0 1.6-.6 2.6-2.5 2.6"/>',
+  target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+  method: '<rect x="3.5" y="5" width="11" height="14" rx="3"/><path d="M11 12h9.5M17.5 9l3 3-3 3"/>',
+  exit: '<path d="M14 4.5h3.5a2.5 2.5 0 0 1 2.5 2.5v10a2.5 2.5 0 0 1-2.5 2.5H14"/><path d="M4 12h11M11 8l4 4-4 4"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="3.5"/><path d="M9.5 4v16"/>',
   play: '<path d="M7 5l12 7-12 7z"/>',
   cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
 }
@@ -65,7 +78,7 @@ export function Icon({ n, s = 22, w = 1.9, c = 'currentColor' }: { n: string; s?
   )
 }
 
-/** 玻璃拟态图标：后面一块彩色底，前面一片磨砂玻璃，图标在玻璃上。 */
+/** 玻璃拟态图标（v0.11 原版，v0.19 恢复）：后面一块彩色底，前面一片磨砂玻璃，图标在玻璃上。 */
 export function GlassIcon({ n, tone = 'coral', s = 34 }: { n: string; tone?: string; s?: number }) {
   return (
     <span className={`gi ${tone}`} style={{ width: s, height: s }}>

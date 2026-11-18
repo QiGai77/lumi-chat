@@ -1,5 +1,5 @@
 /** 智能体：预设系统提示词。点开即带提示词新建对话。 */
-export interface Agent { id: string; name: string; desc: string; icon: string; tone: 'coral' | 'sage' | 'gold' | 'plum'; prompt: string; hello: string }
+export interface Agent { id: string; name: string; desc: string; icon: string; tone: 'coral' | 'sage' | 'gold' | 'plum'; prompt: string; hello: string; custom?: boolean; updated?: number }
 
 export const AGENTS: Agent[] = [
   { id: 'polish', name: '润色编辑', desc: '改得更简洁、更专业，保留原意', icon: 'pen', tone: 'coral',
@@ -21,4 +21,9 @@ export const AGENTS: Agent[] = [
     prompt: '你是专业译者。中文译成英文、其他语言译成中文。译文地道自然，保留格式；有歧义时给出备选并简述差别。只输出译文和必要说明。',
     hello: '发我要翻译的内容。' },
 ]
-export const agentById = (id?: string) => AGENTS.find(a => a.id === id)
+/** v0.20：用户在对话里定制的技能，存本机 localStorage 'lumi.skills'（改动后发 'lumi-skills' 事件）。内置技能不能改删。 */
+const SK = 'lumi.skills'
+export const loadSkills = (): Agent[] => { try { const a = JSON.parse(globalThis.localStorage?.getItem(SK) || '[]'); return Array.isArray(a) ? a : [] } catch { return [] } }
+export const saveSkills = (v: Agent[]) => { globalThis.localStorage?.setItem(SK, JSON.stringify(v)); globalThis.dispatchEvent?.(new Event('lumi-skills')) }
+export const allAgents = (): Agent[] => [...loadSkills(), ...AGENTS]
+export const agentById = (id?: string) => id ? allAgents().find(a => a.id === id) : undefined

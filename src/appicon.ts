@@ -5,7 +5,12 @@ import { Phone, isNative } from './phone'
 export interface AppLook { src?: string; hue: number; sat: number; light: number; pkg?: string }
 const K = 'lumi.appicons'
 const cache: Record<string, AppLook> = (() => { try { return JSON.parse(localStorage.getItem(K) || '{}') } catch { return {} } })()
-const persist = () => { try { localStorage.setItem(K, JSON.stringify(cache)) } catch { /* 太大就算了 */ } }
+const persist = () => {
+  try { localStorage.setItem(K, JSON.stringify(cache)) }
+  catch { // 存不下（图标太多）：只存配色，图标下次会话重新向原生要
+    try { localStorage.setItem(K, JSON.stringify(Object.fromEntries(Object.entries(cache).map(([k, v]) => [k, { ...v, src: undefined }])))) } catch { /* */ }
+  }
+}
 
 /** 名字算一个稳定的色相，没有图标时用。 */
 export const nameHue = (s: string) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
@@ -40,51 +45,91 @@ function analyze(src: string): Promise<{ hue: number; sat: number; light: number
   })
 }
 
-const pending: Record<string, Promise<AppLook>> = {}
+const pending: Record<string, Promise<AppLook> | undefined> = {}
+/** 本次会话里已经向原生要过图标的键：没拿到（没装 / 当时读失败）的每个会话最多再试一次，回到前台时再放开一次（可能刚装了应用）。 */
+const tried = new Set<string>()
+const EV = 'lumi-appicon'
+const okSrc = (s?: string) => !!s && /^data:image\/(png|webp|jpeg);base64,.{40,}/.test(s)
+
+/** v0.20：真机上统一用应用的原生启动图标（Phone.appIcon，Java 侧把自适应图标渲染成 PNG）。
+ * 先按包名找，没有包名或包名找不到就按应用名找（原生侧精确 > 包含 > 被包含）；拿到后同时记在包名和应用名两个键下。
+ * 缓存里没有图标的条目在原生上每个会话重试一次，不会永远停在占位图；只有真没装这个应用、或者在网页版，才显示占位方块。 */
 export async function appLook(app: string, pkg?: string): Promise<AppLook> {
   const k = pkg || app
-  if (cache[k] && cache[k].hue != null && (cache[k].src || !isNative)) return cache[k]
+  const c = cache[k]
+  if (c && c.hue != null && (okSrc(c.src) || !isNative || tried.has(k))) return c
   if (!pending[k]) pending[k] = (async () => {
-    let look: AppLook = { hue: nameHue(app), sat: 0.55, light: 0.5 }
-    if (cache[k]?.src) look = { ...cache[k], ...(await analyze(cache[k].src!)) }
-    else if (isNative) try {
-      const r = await Phone.appIcon({ pkg, name: app })
-      look = { src: r.src, pkg: r.pkg, ...(await analyze(r.src)) }
-    } catch { /* 没装这个应用 */ }
-    cache[k] = look; persist(); return look
+    tried.add(k)
+    let look: AppLook = c && c.hue != null ? { ...c } : { hue: nameHue(app), sat: 0.55, light: 0.5 }
+    if (okSrc(c?.src)) look = { ...c, ...(await analyze(c!.src!)) }
+    else if (isNative) {
+      for (const q of pkg ? [{ pkg, name: app }, { name: app }] : [{ name: app }]) {
+        try {
+          const r = await Phone.appIcon(q)
+          if (okSrc(r.src)) { look = { src: r.src, pkg: r.pkg, ...(await analyze(r.src)) }; break }
+        } catch { /* 这个包名 / 名字没找到，换下一个 */ }
+      }
+    }
+    cache[k] = look
+    if (look.src) { if (look.pkg && !cache[look.pkg]?.src) cache[look.pkg] = look; if (app && !cache[app]?.src) cache[app] = look }
+    persist(); pending[k] = undefined
+    try { window.dispatchEvent(new CustomEvent(EV, { detail: [k, app, look.pkg] })) } catch { /* node */ }
+    return look
   })()
-  return pending[k]
+  return pending[k]!
 }
+
+/** 回到前台：之前没拿到图标的条目再试一次（用户可能刚装了应用）。 */
+export function retryMissingIcons() {
+  let n = 0
+  for (const k of [...tried]) if (!okSrc(cache[k]?.src)) { tried.delete(k); n++ }
+  if (n) try { window.dispatchEvent(new CustomEvent(EV, { detail: ['*'] })) } catch { /* */ }
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && isNative) retryMissingIcons() })
 
 export function useAppLook(app: string, pkg?: string) {
   const k = pkg || app
   const [l, setL] = useState<AppLook | undefined>(cache[k]?.hue != null ? cache[k] : undefined)
-  useEffect(() => { let on = true; appLook(app, pkg).then(x => on && setL(x)); return () => { on = false } }, [app, pkg]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const on = (e: Event) => { const d = (e as CustomEvent).detail as string[]; if (d[0] === '*' || d.includes(k) || d.includes(app)) setTick(t => t + 1) }
+    window.addEventListener(EV, on); return () => window.removeEventListener(EV, on)
+  }, [k, app])
+  useEffect(() => { let on = true; appLook(app, pkg).then(x => on && setL(x)); return () => { on = false } }, [app, pkg, tick]) // eslint-disable-line react-hooks/exhaustive-deps
   return l || { hue: nameHue(app), sat: 0.55, light: 0.5 }
 }
 
-/** 卡片配色（v0.16）：curated 浅色双色方案。背景浅（亮度 88–94%）、文字深色墨 #23272F、阴影淡。
- * 按色相分 8 桶，每桶一对柔和双色；返回结构不变，fg 为深色，solid 取双色中较深的一个（时间线节点用），soft 取最浅色。 */
-const PASTEL: [string, string][] = [
-  ['#FFE3D3', '#FFC9A8'], // 蜜桃
-  ['#DCEEFF', '#B7DBFF'], // 天空
-  ['#D9F2E3', '#B2E5C8'], // 薄荷
-  ['#E7E0FF', '#CFC2FF'], // 薰衣草
-  ['#FFE0E8', '#FFC2D4'], // 蔷薇
-  ['#FFF3CF', '#FFE9A3'], // 奶油黄
-  ['#DFE8F5', '#C3D4EE'], // 雾蓝
-  ['#E4F0D3', '#CBE3B0'], // 豆绿
-]
+/** 卡片配色（v0.19：回到 v0.17 原版的饱和 mesh 渐变卡 + 白字，用户觉得比 v0.18 的近白卡好看）。
+ * 每个色族三色：deep（文字所在区域，白字对比度 ≥5.8:1）、mid（主色）、hi（高光，不放文字）、soft（浅底，时间线等）。
+ * meshBg：文字在左下（原版方向）；meshTop：文字在上方（钱包叠卡露出的标题条，v0.19 新增），把 deep 放到顶部、高光放到右下。
+ * 背景全部是 CSS 写的（几层 radial-gradient + 线性渐变，叠 .mesh 的黑纱和 SVG 颗粒），本仓库自绘，CC0。 */
+export const FAMILIES = [
+  { name: 'coral', deep: '#B8361F', mid: '#E85A3C', hi: '#FFB08A', soft: '#FFE7DE' },
+  { name: 'amber', deep: '#A84A0B', mid: '#E07A1C', hi: '#FFD08A', soft: '#FFEEDB' },
+  { name: 'green', deep: '#0C6E4C', mid: '#1E9A66', hi: '#93E3B8', soft: '#DDF4E8' },
+  { name: 'teal', deep: '#0A6372', mid: '#138E9E', hi: '#86DCE2', soft: '#DAF2F4' },
+  { name: 'blue', deep: '#1C47B0', mid: '#3471E6', hi: '#A3C6FF', soft: '#E1ECFF' },
+  { name: 'indigo', deep: '#33289C', mid: '#5848D8', hi: '#B8ADFF', soft: '#E9E6FF' },
+  { name: 'violet', deep: '#6E2491', mid: '#9A42C6', hi: '#E6ADFF', soft: '#F3E3FB' },
+  { name: 'rose', deep: '#A41F52', mid: '#D63F78', hi: '#FFAACA', soft: '#FFE3EE' },
+] as const
+const GRAPHITE = { name: 'graphite', deep: '#273042', mid: '#465372', hi: '#A6B2C8', soft: '#E6EAF1' }
+const familyOf = (hue: number) => hue < 18 || hue >= 345 ? 0 : hue < 48 ? 1 : hue < 72 ? 1 : hue < 165 ? 2 : hue < 196 ? 3 : hue < 236 ? 4 : hue < 266 ? 5 : hue < 300 ? 6 : 7
+export const meshBg = (f: { deep: string; mid: string; hi: string }) =>
+  `radial-gradient(85% 70% at 100% 0%, ${f.hi}cc 0%, ${f.hi}00 62%), radial-gradient(70% 55% at 12% 6%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(110% 90% at 0% 100%, ${f.deep} 0%, ${f.deep}00 72%), linear-gradient(160deg, ${f.mid} 0%, ${f.deep} 100%)`
+export const meshTop = (f: { deep: string; mid: string; hi: string }) =>
+  `radial-gradient(80% 90% at 100% 100%, ${f.hi}b3 0%, ${f.hi}00 60%), radial-gradient(70% 60% at 88% 92%, ${f.mid} 0%, ${f.mid}00 70%), radial-gradient(120% 70% at 0% 0%, ${f.deep} 0%, ${f.deep}00 75%), linear-gradient(175deg, ${f.deep} 0%, ${f.deep} 30%, ${f.mid} 100%)`
+/** v0.20：卡面改成白底 + 一点对应主题色的浅渐变（右上角 soft 色晕，往右下渐入），字用墨色。 */
+export const lightBg = (f: { mid: string; hi: string; soft: string }) =>
+  `radial-gradient(90% 75% at 100% 0%, ${f.soft} 0%, ${f.soft}00 70%), radial-gradient(60% 50% at 100% 0%, ${f.hi}38 0%, ${f.hi}00 70%), linear-gradient(165deg, #FFFFFF 0%, #FFFFFF 45%, ${f.soft}99 100%)`
+export const lightTop = (f: { mid: string; hi: string; soft: string }) =>
+  `radial-gradient(110% 60% at 0% 0%, ${f.soft} 0%, ${f.soft}00 75%), radial-gradient(50% 40% at 0% 0%, ${f.hi}33 0%, ${f.hi}00 70%), linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 100%)`
 export function tint(l: AppLook, shift = 0) {
-  const h = (l.hue + shift + 360) % 360
-  const bucket = Math.floor(h / 45) % 8
-  const [soft, solid] = PASTEL[bucket]
-  return {
-    fg: '#23272F',
-    bg: `linear-gradient(150deg, ${soft} 0%, ${solid} 100%)`,
-    glow: 'rgba(35,39,47,.14)',
-    solid,
-    soft,
-    ink: '#23272F',
-  }
+  const base = l.sat < 0.18 ? -1 : familyOf((l.hue + 360) % 360)
+  const step = Math.round(shift / 18)
+  const f = base < 0 ? (step ? FAMILIES[(4 + step + 80) % 8] : GRAPHITE) : FAMILIES[(base + step + 80) % 8]
+  return { fg: '#141A26', bg: lightBg(f), top: lightTop(f), glow: f.deep + '66', solid: f.mid, soft: f.soft, ink: f.deep, icon: meshBg(f), family: f.name }
 }
+
+/** 卡片的 CSS 变量：背景 + --glow 阴影光晕、--ink 深色（白底上的强调字、播放键底色）、--acc-soft 浅底。top=true 用文字在上的 mesh。 */
+export const meshVars = (t: ReturnType<typeof tint>, top = false) => ({ background: top ? t.top : t.bg, ['--glow' as string]: t.glow, ['--ink' as string]: t.ink, ['--acc-soft' as string]: t.soft })

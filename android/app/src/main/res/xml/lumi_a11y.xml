@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v0.23：加 typeWindowsChanged（弹窗 / 浮层出现也能唤醒运行线程）、flagIncludeNotImportantViews（自绘控件也在树里）；
+     notificationTimeout 100 → 20ms（同类事件节流时间，越小步后等待越早被唤醒）。 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewLongClicked|typeViewTextChanged|typeViewScrolled"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeWindowsChanged|typeViewClicked|typeViewLongClicked|typeViewTextChanged|typeViewScrolled"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
     android:description="@string/a11y_desc"
-    android:notificationTimeout="100" />
+    android:notificationTimeout="20" />

@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Haptics, ImpactStyle } from '@capacitor/haptics'
 import { Glass } from './glass'
 import { GlassIcon, Icon } from './icons'
-import { MODEL_NAME, MODELS, PLANS, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
+import { MODEL_NAME, MODELS, PLANS, PLATFORM_URL, feedbackPage, fetchUsage, generateImage, generateVideo, keyPage, loadSettings, purchasePage, saveSettings, streamChat, type GatewayUsage, type Media, type Msg, type Settings, type Tier } from './api'
 import { Markdown } from './md/Markdown'
 import { GENUI_PROMPT } from './genui'
 import { blobUrl, putBlob } from './media'
 import { addUsage, loadConvs, loadUsage, saveConvs, uid, when, type Conv } from './store'
-import { AGENTS, agentById, type Agent } from './agents'
+import { allAgents, agentById, type Agent } from './agents'
+import { CUSTOM_NAMES, CUSTOM_PROMPT, MUTATING, commitCard, decide, isWaiting, proposeTool, undoCard, waitDecision, type ChatCard } from './custom'
 import { RpView } from './rp'
-import { Phone, isNative, runTool, takeTrace, toolSpecs, toStep } from './phone'
-import { tint, useAppLook } from './appicon'
-import { flowSummary, loadFlows, paramsIn, runFlow, saveFlows, stepLabel, tidy, upsertFlow, type Flow, type FlowStep } from './flow'
+import { Phone, isNative, isPhoneTool, runTool, takeTrace, toolSpecs, toStep } from './phone'
+import { FAMILIES, meshBg, meshVars, tint, useAppLook } from './appicon'
+import { bentoLayout, bentoOrder, type BentoCell, type BentoSize } from './bento'
+import { consumeRecording, startRecording, flowSummary, loadFlows, runFlow, runSummary, stepLabel, type Flow, type RunResult } from './flow'
+import { AppIcon, FlowEdit, RunPanel, useFlows } from './flowui'
 import type { ApiMsg, Step } from './api'
 import { blankChar, charById, greetings, macros, runRegex, importFile, importLink, loadChars, rpSystem, saveChars, type Character } from './chara'
 import { isDue, loadMcp, loadProjects, loadTasks, probeMcp, saveMcp, saveProjects, saveTasks, type McpServer, type Project, type Task } from './extras'
@@ -27,16 +31,19 @@ const USER_NAME = 'Qi'
 const USER_FULL = 'Qi Gai'
 
 interface Pending { text: string; gen: Gen }
+/** 外部链接：安卓里交给系统浏览器，网页版新窗口。官网 platform.qigai.tech 的获取密钥 / 升级会员 / 反馈都走这里。 */
+const openLink = (url: string) => { if (isNative) Phone.openUrl({ url }).catch(() => window.open(url, '_blank', 'noopener')); else window.open(url, '_blank', 'noopener') }
 
 export default function App() {
   const [view, setView] = useState<View>('home')
   const wide = () => window.innerWidth >= 980
+  // v0.22：回到原来的抽屉：默认隐藏，点侧栏按钮打开完整侧栏（手机盖在内容上 + 遮罩，点外面关；桌面推开内容）。
+  // 图标栏（新对话 / 技能 / MCP）只在长按侧栏按钮后出现，再长按隐藏，存 localStorage 'lumi.sideRail'（'1' = 显示）。单击永远只开关抽屉。
   const [side, setSide] = useState(wide)
-  const [mini, setMini] = useState(() => localStorage.getItem('lumi.sideMini') === '1')
-  const toggleMini = () => {
-    if (window.innerWidth < 980) { setSide(false); return } // 手机端 mini 不生效，仍是关闭抽屉
-    setMini(m => { const n = !m; localStorage.setItem('lumi.sideMini', n ? '1' : '0'); return n })
-  }
+  const [rail, setRailS] = useState(() => localStorage.getItem('lumi.sideRail') === '1')
+  const toggleSide = () => setSide(o => !o)
+  const toggleRail = () => setRailS(r => { const n = !r; localStorage.setItem('lumi.sideRail', n ? '1' : '0'); return n })
+  const sideBtn = useLongPress(toggleSide, () => { toggleRail(); if (!wide()) setSide(false) })
   const shut = () => { if (!wide()) setSide(false) }
   const [convs, setConvs] = useState<Conv[]>(loadConvs)
   const [projects, setProjects] = useState<Project[]>(loadProjects)
@@ -97,6 +104,14 @@ export default function App() {
   }
   const update = (id: string, fn: (c: Conv) => Conv) => setConvs(cs => cs.map(c => (c.id === id ? fn(c) : c)))
   const del = (id: string) => { setConvs(cs => cs.filter(c => c.id !== id)); if (openId === id) setOpenId(null) }
+  // v0.20：对话里的确认卡改了 MCP 列表（custom.ts 写 localStorage + 'lumi-mcp' 事件）就重新读；'lumi-go' 跳页面，'lumi-ask' 带一句话新开对话（按任务生成 Flow 等）
+  useEffect(() => {
+    const mcp = () => setServers(loadMcp())
+    const goE = (e: Event) => go((e as CustomEvent).detail as View)
+    const ask = (e: Event) => { setView('home'); newChat({ text: (e as CustomEvent).detail as string, gen: 'chat' }) }
+    window.addEventListener('lumi-mcp', mcp); window.addEventListener('lumi-go', goE); window.addEventListener('lumi-ask', ask)
+    return () => { window.removeEventListener('lumi-mcp', mcp); window.removeEventListener('lumi-go', goE); window.removeEventListener('lumi-ask', ask) }
+  })
 
   // 定时任务：App 打开期间每 30 秒检查一次，到点就在后台新建对话并跑完
   const running = useRef(new Set<string>())
@@ -108,6 +123,17 @@ export default function App() {
     setTasks(ts => ts.map(x => x.id === t.id ? { ...x, lastRun: Date.now(), lastConv: cid } : x))
     setConvs(cs => [{ id: cid, title: t.name, tier, updated: Date.now(), messages: [user, { role: 'assistant', content: '', tier }], task: t.id }, ...cs])
     const set = (m: Partial<Msg>) => setConvs(cs => cs.map(c => c.id === cid ? { ...c, updated: Date.now(), messages: [user, { ...c.messages[1], ...m, role: 'assistant' }] } : c))
+    // v0.20：提示词是「运行 Flow「名称」」时直接在手机上跑这个 Flow（按任务生成的 Flow 配合定时任务实现「每天」）
+    const fm = t.prompt.trim().match(/^运行\s*Flow\s*[「“"]([^」”"]+)[」”"]/)
+    const fl = fm ? loadFlows().find(f => f.name === fm[1] || f.id === fm[1]) : undefined
+    if (fm) {
+      try {
+        if (!fl) set({ content: `没有找到名为「${fm[1]}」的 Flow` })
+        else if (!isNative) set({ content: `Flow「${fl.name}」只能在安卓 App 里运行` })
+        else set({ content: runSummary(await runFlow(fl), fl.name) })
+      } catch (e) { set({ content: '定时任务运行失败：' + (e as Error).message }) }
+      running.current.delete(t.id); return
+    }
     try {
       const r = await streamChat({ settings, tier, think: false, messages: [user], signal: new AbortController().signal, system: settings.genUI ? GENUI_PROMPT : undefined, onDelta: (t2, rs) => set({ content: t2, reasoning: rs }) })
       set({ ms: r.firstTokenMs }); addUsage(0, r.promptTokens + r.completionTokens)
@@ -124,7 +150,7 @@ export default function App() {
   const [wallVer, setWallVer] = useState(() => Number(localStorage.getItem('lumi.wallVer') || 0))
   useEffect(() => { if (settings.theme === 'wallpaper') blobUrl('wallpaper:' + wallVer).then(u => setWall(u)); else setWall(null) }, [settings.theme, wallVer])
   const plan = gu?.planName || null
-  const menuBtn = <button className="side-btn press" onClick={() => setSide(true)} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
+  const menuBtn = <button className="side-btn press" {...sideBtn} aria-label="侧栏" title="侧栏（长按显示 / 隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
   const back = (to: View, title: string) => <div className="sub-head">{menuBtn}<button className="nav-back press" onClick={() => go(to)} aria-label="返回"><Icon n="back" s={20} w={2.2} /></button><span className="sub-title">{title}</span></div>
   const head = (title: string, sub: string, right?: React.ReactNode) => <div className="page-h">{menuBtn}<div className="grow"><h1 className="serif">{title}</h1><p>{sub}</p></div>{right}</div>
   const flowEd = view.startsWith('flow:') ? view.slice(5) : null
@@ -132,10 +158,10 @@ export default function App() {
   const proj = view.startsWith('project:') ? projects.find(p => 'project:' + p.id === view) : null
 
   return (
-    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${side && mini ? 'side-mini' : ''}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
+    <div className={`app theme-${settings.theme} ${side ? 'side-open' : ''} ${rail ? 'rail-on' : 'rail-off'}`} style={wall ? { ['--wall' as string]: `url(${wall})` } : undefined}>
       <div className="app-bg"><div className="halftone" /></div>
       <Sidebar view={view} go={go} convs={convs} openId={openId} onOpen={openConv} onNew={() => { go('home') }} onDelete={del}
-        plan={plan} mini={mini} onToggleMini={toggleMini} />
+        plan={plan} side={side} rail={rail} btn={sideBtn} onUpgrade={() => openLink(purchasePage(settings))} />
       <div className="side-scrim" onClick={() => setSide(false)} />
       <main className="main">
         <div className={`page ${open ? 'pushed' : ''}`}>
@@ -154,7 +180,7 @@ export default function App() {
                 save={c => setChars(cs => cs.some(x => x.id === c.id) ? cs.map(x => x.id === c.id ? c : x) : [c, ...cs])}
                 remove={() => { setChars(cs => cs.filter(x => x.id !== view.slice(5))); go('chars') }} onChat={c => newChat(undefined, { char: c })} /></>}
               {view === 'skills' && <>{head('技能', '预设好角色和方法，点开就能用')}<Agents onPick={a => newChat(undefined, { agent: a })} /></>}
-              {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<McpPage servers={servers} setServers={setServers} /></>}
+              {view === 'mcp' && <>{head('MCP', '连接你的 MCP 服务器（Streamable HTTP）')}<AskBar kind="mcp" /><McpPage servers={servers} setServers={setServers} /></>}
               {view === 'tasks' && <>{head('定时任务', '到点自动提问，结果存成一段新对话')}<TasksPage tasks={tasks} setTasks={setTasks} onRun={runTask} onOpen={openConv} /></>}
               {view === 'projects' && <>{head('项目', '把相关对话放在一起，共用一套说明')}<ProjectsPage projects={projects} setProjects={setProjects} convs={convs} onOpen={p => go(`project:${p}`)} onImport={(ps, cs) => { setProjects(a => [...a.filter(x => !ps.some(y => y.id === x.id)), ...ps]); setConvs(a => [...cs.filter(c => !a.some(x => x.id === c.id)), ...a].sort((x, y) => y.updated - x.updated)) }} /></>}
               {proj && <>{back('projects', proj.name)}<ProjectPage p={proj} convs={convs.filter(c => c.project === proj.id)}
@@ -169,43 +195,57 @@ export default function App() {
           </div>
         </div>
         {open && <Chat key={open.id} conv={open} settings={settings} tier={tier} think={think} pending={pending} clearPending={() => setPending(null)}
-          project={projects.find(p => p.id === open.project)} onMenu={() => setSide(true)} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
+          project={projects.find(p => p.id === open.project)} menuBtn={<button className="cb-btn cb-side" {...sideBtn} aria-label="侧栏"><Icon n="sidebar" s={22} w={1.9} /></button>} onNew={() => go('home')} onMode={() => setSheet(true)} update={fn => update(open.id, fn)} />}
       </main>
       <Preview />
       <ModeSheet show={sheet} onClose={() => setSheet(false)} tier={tier} setTier={setTier} think={think} setThink={setThink}
-        plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} />
+        plan={plan} gu={gu} onPlans={() => { setSheet(false); go('wallet') }} onUpgrade={() => { setSheet(false); openLink(purchasePage(settings)) }} />
     </div>
   )
 }
 
+/* ---------------- 长按：侧栏按钮单击开关抽屉，长按（480ms）开关图标栏 */
+type LongPress = { onPointerDown: (e: React.PointerEvent) => void; onPointerUp: () => void; onPointerLeave: () => void; onPointerCancel: () => void; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void }
+function useLongPress(tap: () => void, long: () => void, ms = 480): LongPress {
+  const t = useRef<number | null>(null), fired = useRef(false)
+  const clear = () => { if (t.current != null) { clearTimeout(t.current); t.current = null } }
+  return {
+    onPointerDown: () => { fired.current = false; clear(); t.current = window.setTimeout(() => { t.current = null; fired.current = true; if (isNative) Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {}); long() }, ms) },
+    onPointerUp: clear, onPointerLeave: clear, onPointerCancel: clear,
+    onClick: () => { if (fired.current) { fired.current = false; return } tap() },
+    onContextMenu: e => e.preventDefault(),
+  }
+}
+
 /* ---------------- sidebar (ChatGPT 式) */
-function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini, onToggleMini }: {
+function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, side, rail, btn, onUpgrade }: {
   view: View; go: (v: View) => void; convs: Conv[]; openId: string | null; onOpen: (id: string) => void; onNew: () => void
-  onDelete: (id: string) => void; plan: string | null; mini: boolean; onToggleMini: () => void
+  onDelete: (id: string) => void; plan: string | null; side: boolean; rail: boolean; btn: LongPress; onUpgrade: () => void
 }) {
   const [q, setQ] = useState('')
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
   const item = (v: View, icon: string, label: string, tone: string) => (
     <button className={`s-item ${view === v || (v === 'projects' && view.startsWith('project:')) || (v === 'flows' && view.startsWith('flow')) ? 'on' : ''}`} onClick={() => go(v)} title={label}><GlassIcon n={icon} tone={tone} s={30} />{label}</button>)
-  if (mini) {
+  if (!side && !rail) return null
+  if (!side) {
     return (
-      <aside className="side">
+      <aside className="side rail">
         <div className="s-head">
-          <button className="side-btn" onClick={onToggleMini} aria-label="展开侧栏" title="展开侧栏"><Icon n="side" s={22} w={1.9} /></button>
+          <button className="side-btn" {...btn} aria-label="展开侧栏" title="展开侧栏（长按隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
         </div>
-        <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新建对话"><GlassIcon n="compose" tone="coral" s={30} /></button>
-        <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能"><GlassIcon n="spark" tone="plum" s={30} /></button>
-        <button className={`s-item ${view === 'mcp' ? 'on' : ''}`} onClick={() => go('mcp')} title="MCP"><GlassIcon n="plug" tone="sky" s={30} /></button>
+        <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew} title="新对话" aria-label="新对话"><GlassIcon n="compose" tone="coral" s={30} /><span className="rail-l">新对话</span></button>
+        <button className={`s-item ${view === 'skills' ? 'on' : ''}`} onClick={() => go('skills')} title="技能" aria-label="技能"><GlassIcon n="spark" tone="plum" s={30} /><span className="rail-l">技能</span></button>
+        <button className={`s-item ${view === 'mcp' ? 'on' : ''}`} onClick={() => go('mcp')} title="MCP" aria-label="MCP"><GlassIcon n="plug" tone="sky" s={30} /><span className="rail-l">MCP</span></button>
       </aside>
     )
   }
   return (
     <aside className="side">
       <div className="s-head">
-        <button className="side-btn" onClick={onToggleMini} aria-label="折叠侧栏" title="折叠成图标栏"><Icon n="side" s={22} w={1.9} /></button>
+        <button className="side-btn" {...btn} aria-label="收起侧栏" title="收起侧栏（长按显示 / 隐藏图标栏）"><Icon n="sidebar" s={22} w={1.9} /></button>
         <div className="s-search"><Icon n="search" s={15} w={2} /><input placeholder="搜索" value={q} onChange={e => setQ(e.target.value)} /></div>
       </div>
-      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新建对话</button>
+      <button className={`s-item new ${view === 'home' && !openId ? 'on' : ''}`} onClick={onNew}><GlassIcon n="compose" tone="coral" s={30} />新对话</button>
       {item('chars', 'mask', '角色', 'rose')}
       {item('phone', 'phone', '手机连接', 'sky')}
       {item('flows', 'bolt', 'Flow', 'gold')}
@@ -225,7 +265,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
       <button className={`s-me ${view === 'me' || view === 'wallet' || view === 'settings' || view === 'fav' ? 'on' : ''}`} onClick={() => go('me')}>
         <span className="avatar sm"><Icon n="user" s={20} w={1.8} c="#fff" /></span>
         <div className="grow"><div className="b">{USER_FULL}</div><div className="t12">{plan || 'Free'}</div></div>
-        {!plan && <span className="up-tag">升级</span>}
+        {!plan && <span className="up-tag" role="link" onClick={e => { e.stopPropagation(); onUpgrade() }}>升级</span>}
       </button>
     </aside>
   )
@@ -233,6 +273,7 @@ function Sidebar({ view, go, convs, openId, onOpen, onNew, onDelete, plan, mini,
 
 /* ---------------- 我的 */
 function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu: GatewayUsage | null; settings: Settings; favCount: number; go: (v: View) => void }) {
+  const ext = <span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span>
   const u = usageOf(gu)
   const ok = !!(settings.baseUrl && settings.apiKey)
   return (
@@ -247,12 +288,17 @@ function MePage({ plan, gu, settings, favCount, go }: { plan: string | null; gu:
           {u.limit > 0 && <div className="meter"><div style={{ width: `${u.pct}%` }} /></div>}
           <div className="t12">{u.limit > 0 ? `${u.win}已用 ${u.pct.toFixed(0)}%` : '升级后可用 Helium · Neon · Argon'}{u.exp ? ` · ${u.exp.getMonth() + 1}月${u.exp.getDate()}日到期` : ''}</div>
         </div>
-        <button className="acct-btn" onClick={() => go('wallet')}>{plan ? '管理' : '升级'}</button>
+        <button className="acct-btn" onClick={() => openLink(purchasePage(settings))}>{plan ? '续费' : '升级'}</button>
       </div>
       <div className="list" style={{ marginTop: 18 }}>
-        <button className="row press-row" onClick={() => go('wallet')}><GlassIcon n="crown" tone="gold" s={32} /><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+        <button className="row press-row" onClick={() => openLink(purchasePage(settings))}><GlassIcon n="crown" tone="gold" s={32} /><span className="t16 grow">升级会员</span><span className="t13">{plan ? plan : 'Pro / Max / Ultra'}</span>{ext}</button>
+        <button className="row press-row" onClick={() => go('wallet')}><GlassIcon n="wallet" tone="sage" s={32} /><span className="t16 grow">用量与套餐</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
         <button className="row press-row" onClick={() => go('fav')}><GlassIcon n="star" tone="coral" s={32} /><span className="t16 grow">收藏</span><span className="t13">{favCount || ''}</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
         <button className="row press-row" onClick={() => go('settings')}><GlassIcon n="gear" tone="slate" s={32} /><span className="t16 grow">设置</span><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+      </div>
+      <div className="list" style={{ marginTop: 14 }}>
+        <button className="row press-row" onClick={() => openLink(keyPage(settings))}><GlassIcon n="key" tone="sky" s={32} /><span className="t16 grow">获取 API Key</span>{ext}</button>
+        <button className="row press-row" onClick={() => openLink(feedbackPage())}><GlassIcon n="chat" tone="plum" s={32} /><span className="t16 grow">提交反馈</span>{ext}</button>
       </div>
     </section>
   )
@@ -323,7 +369,8 @@ function Favicon({ site, status }: { site: string; name?: string; status: McpSer
   return <FaviconImpl site={site} status={status} />
 }
 function FaviconImpl({ site, status }: { site: string; status: McpServer['status'] }) {
-  const srcs = [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
+  // 本机 / 内网 IP 没有公开图标，直接用玻璃插头图标，不去请求外部图标服务
+  const srcs = /^(localhost|127\.|10\.|192\.168\.|\d+\.\d+\.\d+\.\d+(:\d+)?$)/.test(site) ? [] : [`https://${site}/favicon.ico`, `https://icons.duckduckgo.com/ip3/${site}.ico`, `https://www.google.com/s2/favicons?domain=${site}&sz=128`]
   const [i, setI] = useState(0)
   return (
     <span className="fav">
@@ -451,7 +498,7 @@ function ProjectPage({ p, convs, save, remove, onNew, onOpen }: { p: Project; co
 }
 
 /* ---------------- composer card (home) */
-function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void; phone?: () => void; phoneOn?: boolean }) {
+function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn, onTask }: { show: boolean; gen: Gen; setGen: (g: Gen) => void; onClose: () => void; onMode: () => void; phone?: () => void; phoneOn?: boolean; onTask?: () => void }) {
   return <>
     {show && <div className="gen-scrim" onClick={onClose} />}
     <div className={`gen-menu ${show ? 'show' : ''}`}>
@@ -460,6 +507,7 @@ function GenMenu({ show, gen, setGen, onClose, onMode, phone, phoneOn }: { show:
           <span className="gi"><Icon n={g === 'chat' ? 'chat' : g === 'image' ? 'image' : 'film'} s={18} w={2} /></span>{GEN_LABEL[g]}
           {gen === g && <Icon n="check" s={16} w={2.4} />}
         </button>))}
+      {onTask && <button onClick={() => { onClose(); setGen('chat'); onTask() }}><span className="gi"><Icon n="eye" s={18} w={2} /></span>按任务生成 Flow</button>}
       {phone && <button onClick={() => { onClose(); phone() }}><span className="gi"><Icon n="phone" s={18} w={2} /></span>手机操控{phoneOn && <Icon n="check" s={16} w={2.4} />}</button>}
       <button onClick={() => { onClose(); onMode() }}><span className="gi"><Icon n="spark" s={18} w={2} /></span>选择模式</button>
     </div>
@@ -477,7 +525,7 @@ function Home({ convs, tier, think, setThink, onMode, onSend, onOpen, onDelete }
   const [q, setQ] = useState('')
   const ta = useRef<HTMLTextAreaElement>(null)
   const composing = useRef(false)
-  const go = () => { if (!text.trim()) return; onSend({ text, gen }); setText(''); setGen('chat') }
+  const go = () => { if (!text.trim()) return; onSend({ text, gen }); setText(''); setGen('chat'); if (ta.current) ta.current.style.height = '' }
   const fill = (s: string) => { setText(s); requestAnimationFrame(() => { const el = ta.current; if (el) { el.focus(); el.setSelectionRange(s.length, s.length) } }) }
   const list = convs.filter(c => !q || c.title.includes(q) || c.messages.some(m => m.content.includes(q)))
 
@@ -512,10 +560,10 @@ function Home({ convs, tier, think, setThink, onMode, onSend, onOpen, onDelete }
         <div className="cc-row">
           <button className={`cc-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={20} w={2} /></button>
           <button className="chip" onClick={onMode}><El t={tier} s={20} />{MODEL_NAME[tier]}<Icon n="down" s={13} w={2.4} /></button>
-          <button className={`chip ${think ? 'on' : ''}`} onClick={() => setThink(!think)}><Icon n="spark" s={14} w={2.2} />深度思考</button>
+          <button className={`chip chip-think ${think ? 'on' : ''}`} onClick={() => setThink(!think)} aria-label="深度思考" title="深度思考"><Icon n="spark" s={14} w={2.2} /><span className="chip-tx">深度思考</span></button>
           <button className={`send big ${text.trim() ? 'on' : ''}`} onClick={go} aria-label="发送"><Icon n="up" s={20} c="#fff" w={2.4} /></button>
         </div>
-        <div className="home-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} /></div>
+        <div className="home-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} onTask={() => fill('按任务生成 Flow：')} /></div>
       </div>
       <div className="quick">{QUICK.map(([l, p]) => <button key={l} className="q-chip press" onClick={() => fill(p)}>{l}</button>)}</div>
 
@@ -618,25 +666,13 @@ function ProjectStore({ p, save }: { p: Project; save: (p: Project) => void }) {
 }
 
 /* ---------------- Flow */
-function AppIcon({ app, pkg, s = 48 }: { app: string; pkg?: string; s?: number }) {
-  const look = useAppLook(app, pkg)
-  if (look.src) return <img className="app-ic" src={look.src} alt="" style={{ width: s, height: s }} />
-  return <span className="app-ic ph" style={{ width: s, height: s, background: tint(look).bg, fontSize: s * 0.42 }}>{app.slice(0, 1)}</span>
-}
-
 function useRecordReturn(go: (v: View) => void, setMsg: (m: string) => void) {
   useEffect(() => {
     const vis = async () => {
-      if (document.hidden || !isNative) return
-      const rec = localStorage.getItem('lumi.recording'); if (!rec) return
+      if (document.hidden) return
       try {
-        const st = await Phone.recordStatus(); if (st.recording) return
-        localStorage.removeItem('lumi.recording')
-        const meta = JSON.parse(rec) as { app: string; pkg: string }
-        const steps = tidy(st.steps || [], meta.app)
-        if (steps.length < 2) { setMsg('没录到操作，再试一次'); return }
-        const fl = upsertFlow({ id: uid(), app: meta.app, pkg: meta.pkg, name: '新的 Flow', desc: '', steps, params: [], updated: Date.now(), runs: 0 })
-        go(`flow:${fl.id}` as View)
+        const r = await consumeRecording(); if (!r) return
+        if ('error' in r) setMsg(r.error); else go(`flow:${r.id}` as View)
       } catch (e) { setMsg((e as Error).message) }
     }
     document.addEventListener('visibilitychange', vis); vis()
@@ -644,21 +680,10 @@ function useRecordReturn(go: (v: View) => void, setMsg: (m: string) => void) {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 }
 async function startRecord(a: { label: string; pkg: string }, setMsg: (m: string) => void) {
-  try {
-    if (!isNative) { setMsg('只有安卓 App 里可以录制'); return }
-    if (!(await Phone.a11yStatus()).enabled) { setMsg('先到「手机连接」里打开无障碍'); return }
-    localStorage.setItem('lumi.recording', JSON.stringify({ app: a.label, pkg: a.pkg }))
-    await Phone.recordStart({ pkg: a.pkg, app: a.label })
-  } catch (e) { setMsg((e as Error).message) }
+  try { const why = await startRecording({ app: a.label, pkg: a.pkg }); if (why) setMsg(why) } catch (e) { setMsg((e as Error).message) }
 }
 
-function useFlows() {
-  const [flows, setFlows] = useState<Flow[]>(loadFlows)
-  useEffect(() => { const on = () => setFlows(loadFlows()); window.addEventListener('lumi-flows', on); return () => window.removeEventListener('lumi-flows', on) }, [])
-  return flows
-}
-
-function AppPicker({ onPick, onClose }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void }) {
+function AppPicker({ onPick, onClose, onAsk }: { onPick: (a: { label: string; pkg: string }) => void; onClose: () => void; onAsk?: () => void }) {
   const [q, setQ] = useState('')
   const [apps, setApps] = useState<{ label: string; pkg: string }[]>([])
   useEffect(() => { if (isNative) Phone.apps({ q }).then(r => setApps(r.apps)).catch(() => {}) }, [q])
@@ -668,6 +693,8 @@ function AppPicker({ onPick, onClose }: { onPick: (a: { label: string; pkg: stri
         <div className="grabber" />
         <div className="t18 b" style={{ marginBottom: 4 }}>录制哪个应用</div>
         <div className="t13" style={{ marginBottom: 12 }}>会自动打开它，顶部出现录制条。照常点一遍，点「完成」回到这里。</div>
+        {onAsk && <button className="ask-bar press-row" onClick={onAsk}><span className="ask-ic"><Icon n="eye" s={16} w={2.2} /></span>
+          <div className="grow"><div className="t15 b">不想录？按任务生成</div><div className="t12">一句话描述要做的事，AI 生成步骤</div></div><Icon n="right" s={15} w={2} c="var(--label3)" /></button>}
         <input className="inp" placeholder="搜索应用" value={q} onChange={e => setQ(e.target.value)} />
         <div className="app-pick">{apps.map(a => <button key={a.pkg} className="ap-item press" onClick={() => onPick(a)}><AppIcon app={a.label} pkg={a.pkg} s={52} /><span className="ell">{a.label}</span></button>)}
           {!isNative && <div className="t13">安卓 App 里会列出手机上的应用</div>}</div>
@@ -690,188 +717,149 @@ function ParamSheet({ f, onRun, onClose }: { f: Flow; onRun: (v: Record<string, 
   )
 }
 
+/** 运行 Flow 的共用状态：有参数先弹参数表，跑完显示结果文字和运行明细。总览页的便当格和应用页的叠卡都用它。 */
+function useRunner() {
+  const [ask, setAsk] = useState<Flow | null>(null)
+  const [running, setRunning] = useState('')
+  const [msg, setMsg] = useState('')
+  const [res, setRes] = useState<RunResult | null>(null)
+  const run = async (f: Flow, vals: Record<string, string> = {}) => {
+    setAsk(null); setRunning(f.id); setMsg(''); setRes(null)
+    try { const r = await runFlow(f, vals); setRes(r); setMsg(runSummary(r, f.name)) }
+    catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
+  }
+  const start = (f: Flow) => { if (!running) { if (f.params.length) setAsk(f); else run(f) } }
+  const ui = <>{res && <RunPanel r={res} />}{ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}</>
+  return { running, msg, setMsg, res, start, ui }
+}
+
+const flowMeta = (f: Flow) => `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}${f.lastMs ? ` · 上次 ${(f.lastMs / 1000).toFixed(1)} 秒` : ''}${f.lastOk === false ? ' · 上次失败' : ''}`
+
 function FlowsPage({ go }: { go: (v: View) => void }) {
   const flows = useFlows()
   const [pick, setPick] = useState(false)
-  const [msg, setMsg] = useState('')
-  useRecordReturn(go, setMsg)
-  const apps = [...new Set(flows.map(f => f.app))]
+  const [ask, setAsk] = useState(false)
+  const R = useRunner()
+  useRecordReturn(go, R.setMsg)
+  const apps = bentoOrder([...new Set(flows.map(f => f.app))], a => flows.filter(f => f.app === a).length)
+  const ph = bentoLayout(apps.length, 2), dk = bentoLayout(apps.length, 4)
   return (
     <section className="fade">
       <div className="f-sum"><span>{apps.length} 个应用 · {flows.length} 个 Flow</span>
+        <button className="gen-btn press" onClick={() => setAsk(true)}><Icon n="eye" s={15} w={2.2} />按任务生成</button>
         <button className="rec-btn press" onClick={() => setPick(true)}><span className="rec-dot" />录制</button></div>
-      {msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{msg}</div>}
+      {R.msg && <div className="imp-msg ok" style={{ marginBottom: 12 }}>{R.msg}</div>}
       {flows.length === 0 ? <div className="f-empty">
-        <div className="fe-stack"><span style={{ background: 'linear-gradient(150deg,#FFE3D3,#FFC9A8)' }} /><span style={{ background: 'linear-gradient(150deg,#DCEEFF,#B7DBFF)' }} /><span style={{ background: 'linear-gradient(150deg,#E7E0FF,#CFC2FF)' }} /></div>
+        <div className="fe-stack">{[0, 4, 6].map(k => <span key={k} className="mesh" style={{ background: meshBg(FAMILIES[k]) }}><Icon n={['bolt', 'search', 'repeat'][k % 3 === 0 ? 0 : k === 4 ? 1 : 2]} s={26} w={2} c="#fff" /></span>)}</div>
         <div className="t18 b">把常用操作存成一张卡</div>
-        <div className="t13">录一遍操作，或者在手机操控对话里做完一件事后点「存成 Flow」。下次点一下就能跑完。</div>
-      </div> : <div className="fapp-grid">
-        {apps.map(a => <AppCard key={a} app={a} flows={flows.filter(f => f.app === a)} onOpen={() => go(`flowapp:${a}` as View)} />)}
-        <button className="fapp add press" onClick={() => setPick(true)}><span className="fa-plus"><Icon n="plus" s={22} w={2.2} /></span><span>新应用</span></button>
-      </div>}
-      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, setMsg) }} />}
+        <div className="t13">录一遍操作，或者用一句话描述任务让 AI 生成（不认识的界面用 AI 视觉步）。下次点一下就能跑完。</div>
+        <button className="btn-run" style={{ marginTop: 14 }} onClick={() => setAsk(true)}><Icon n="eye" s={15} w={2.2} />按任务生成</button>
+      </div> : <div className="bento-wrap"><div className="bento">
+        {apps.map((a, i) => <BentoTile key={a} app={a} ph={ph[i]} dk={dk[i]} flows={flows.filter(f => f.app === a)} running={R.running} onRun={R.start} onOpen={() => go(`flowapp:${a}` as View)} />)}
+        <button className={`bt add ${ph[apps.length].w > 1 ? 'ph-row' : ''} ${dk[apps.length].w > 1 ? 'dk-row' : ''} press`} style={cellVars(ph[apps.length], dk[apps.length])} onClick={() => setPick(true)}><span className="fa-plus"><Icon n="plus" s={22} w={2.2} /></span><span>新应用</span></button>
+      </div></div>}
+      {R.ui}
+      {pick && <AppPicker onClose={() => setPick(false)} onPick={a => { setPick(false); startRecord(a, R.setMsg) }} onAsk={() => { setPick(false); setAsk(true) }} />}
+      {ask && <AskSheet kind="flow" onClose={() => setAsk(false)} />}
     </section>
   )
 }
 
-function AppCard({ app, flows, onOpen }: { app: string; flows: Flow[]; onOpen: () => void }) {
+/** 便当格里的一格。hero：上方深色条放图标和名字，下面一块奶白面板列出 Flow + 播放键；wide / tall：右侧或中间是可直接运行的 Flow 胶囊；sq：原版小卡。 */
+/** 格子位置写成 CSS 变量：--pc/--pr/--pw/--ph 是手机（单位正方形），--dc/--dr/--dw/--dh 是桌面；CSS 换算成底层网格的列和行。 */
+const cellVars = (p: BentoCell, d: BentoCell) => ({ ['--pc' as string]: p.c, ['--pr' as string]: p.r, ['--pw' as string]: p.w, ['--ph' as string]: p.h,
+  ['--dc' as string]: d.c, ['--dr' as string]: d.r, ['--dw' as string]: d.w, ['--dh' as string]: d.h })
+
+function BentoTile({ app, ph, dk, flows, running, onRun, onOpen }: { app: string; ph: BentoCell; dk: BentoCell; flows: Flow[]; running: string; onRun: (f: Flow) => void; onOpen: () => void }) {
   const pkg = flows.find(f => f.pkg)?.pkg
   const t = tint(useAppLook(app, pkg))
+  const total = flows.reduce((n, f) => n + f.runs, 0)
+  // 内容按手机格子的尺寸排；桌面格子尺寸不同时（被降级），用 data-dk 让 CSS 调整
+  const size: BentoSize = ph.size
+  const pos = { ...cellVars(ph, dk) }
+  const play = (f: Flow) => (e: React.MouseEvent) => { e.stopPropagation(); onRun(f) }
+  const open = (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }
+  if (size === 'hero') {
+    const shown = flows.slice(0, 3)
+    return (
+      <div className="bt hero mesh press-soft" data-dk={dk.size} style={{ ...meshVars(t, true), ...pos }} role="button" tabIndex={0} onClick={onOpen} onKeyDown={open} aria-label={app}>
+        <div className="bh-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={46} /></span>
+          <div className="grow"><div className="bh-name ell">{app}</div><div className="bh-sub ell">{flows.length} 个 Flow{total ? ` · 运行 ${total} 次` : ''}</div></div>
+          <span className="bh-go" aria-hidden="true"><Icon n="right" s={16} w={2.4} /></span></div>
+        <div className="bh-list">
+          {shown.map(f => <div key={f.id} className={`bh-row ${running === f.id ? 'busy' : ''}`}>
+            <span className="bh-gl"><Icon n={flowGlyph(f)} s={16} w={2} /></span>
+            <div className="grow"><div className="bh-fn ell">{f.name}</div><div className="bh-fm ell">{running === f.id ? '运行中…' : flowMeta(f)}</div></div>
+            <button className="bh-play press" onClick={play(f)} aria-label={`运行 ${f.name}`}><Icon n="play" s={12} w={2.6} /></button></div>)}
+          {flows.length > shown.length && <div className="bh-more">还有 {flows.length - shown.length} 个 · 点开查看</div>}
+        </div>
+      </div>)
+  }
+  const pills = size === 'wide' ? flows.slice(0, 2) : size === 'tall' ? flows.slice(0, 3) : []
   return (
-    <button className="fapp press" style={{ background: t.bg, color: t.fg, boxShadow: `0 14px 30px -14px ${t.glow}` }} onClick={onOpen}>
-      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={46} /></span><span className="fa-n">{flows.length}</span></div>
-      <div className="fa-name ell">{app}</div>
-      <div className="fa-chips">{flows.slice(0, 2).map(f => <span key={f.id} className="ell">{f.name}</span>)}{flows.length > 2 && <span>+{flows.length - 2}</span>}</div>
-    </button>
-  )
+    <div className={`bt ${size} mesh press`} data-dk={dk.size} style={{ ...meshVars(t), ...pos }} role="button" tabIndex={0} onClick={onOpen} onKeyDown={open} aria-label={app}>
+      {size === 'tall' && <span className="bt-mark" aria-hidden="true">{app.slice(0, 1)}</span>}
+      <div className="fa-top"><span className="fa-ring"><AppIcon app={app} pkg={pkg} s={size === 'sq' ? 40 : 44} /></span>{size !== 'wide' && <span className="fa-n">{flows.length}</span>}</div>
+      {pills.length > 0 && <div className="bt-pills">{pills.map(f =>
+        <button key={f.id} className={`bt-pill press ${running === f.id ? 'busy' : ''}`} onClick={play(f)} aria-label={`运行 ${f.name}`}>
+          <span className="ell">{running === f.id ? '运行中…' : f.name}</span><Icon n="play" s={10} w={2.8} /></button>)}</div>}
+      <div className="bt-text"><div className="fa-name ell">{app}</div>
+        <div className="fa-sub ell">{size === 'sq' ? flows.map(f => f.name).join(' · ') : size === 'tall' ? (total ? `运行过 ${total} 次` : '点胶囊直接运行') : `${flows.length} 个 Flow`}</div></div>
+    </div>)
 }
 
 const flowGlyph = (f: Flow) => /搜/.test(f.name) ? 'search' : /外卖|点餐|下单|买/.test(f.name) ? 'wallet' : /发|写|笔记|评论/.test(f.name) ? 'pen' : /消息|聊|回复/.test(f.name) ? 'chat' : /打卡|签到/.test(f.name) ? 'check' : 'bolt'
+const SHIFTS = [0, -18, 18, -36, 36]
 
 function FlowApp({ app, go }: { app: string; go: (v: View) => void }) {
   const flows = useFlows().filter(f => f.app === app)
   const pkg = flows.find(f => f.pkg)?.pkg
   const look = useAppLook(app, pkg)
   const t = tint(look)
-  const [ask, setAsk] = useState<Flow | null>(null)
-  const [running, setRunning] = useState('')
-  const [msg, setMsg] = useState('')
-  useRecordReturn(go, setMsg)
-  const run = async (f: Flow, vals: Record<string, string> = {}) => {
-    setAsk(null); setRunning(f.id); setMsg('')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `「${f.name}」完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `「${f.name}」卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`) }
-    catch (e) { setMsg((e as Error).message) } finally { setRunning('') }
-  }
+  const R = useRunner()
+  const [sel, setSel] = useState<string | null>(null)
+  const [ask, setAsk] = useState(false)
+  useRecordReturn(go, R.setMsg)
   const total = flows.reduce((n, f) => n + f.runs, 0)
+  // 钱包叠卡（参考 Riffs「Five glossy cards, one continuous shuffle」）：卡片重叠，只露出 60px 标题条；点一张抬起展开，显示步骤和运行键。≤2 个时全部展开。
+  const flat = flows.length <= 2
   return (
     <section className="fade">
-      <div className="fhero" style={{ background: t.bg, color: t.fg, boxShadow: `0 18px 40px -18px ${t.glow}` }}>
-        <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={64} /></span>
+      <div className="fhero mesh" style={meshVars(t)}>
+        <span className="fh-ring"><AppIcon app={app} pkg={pkg} s={60} /></span>
         <div className="fh-name">{app}</div>
         <div className="fh-sub">{flows.length} 个 Flow{total ? ` · 运行过 ${total} 次` : ''}</div>
-        <button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, setMsg)}><span className="rec-dot" />录制新 Flow</button>
+        <div className="fh-btns"><button className="fh-rec press" onClick={() => startRecord({ label: app, pkg: pkg || look.pkg || '' }, R.setMsg)}><span className="rec-dot" />录制新 Flow</button>
+          <button className="fh-gen press" onClick={() => setAsk(true)}><Icon n="eye" s={14} w={2.2} />按任务生成</button></div>
       </div>
-      {msg && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{msg}</div>}
-      <div className="ftile-grid">
-        {flows.map((f, i) => { const c = tint(look, [0, -18, 16, -34, 30][i % 5]); return (
-          <div key={f.id} className={`ftile press ${running === f.id ? 'busy' : ''}`} style={{ background: c.bg, color: c.fg, boxShadow: `0 12px 26px -14px ${c.glow}` }}
-            onClick={() => !running && (f.params.length ? setAsk(f) : run(f))}>
-            <div className="ft-top"><span className="ft-glyph"><Icon n={flowGlyph(f)} s={19} w={2} /></span>
-              <button className="ft-more" onClick={e => { e.stopPropagation(); go(`flow:${f.id}` as View) }} aria-label="编辑"><Icon n="more" s={18} w={2.4} /></button></div>
-            <div className="ft-name">{f.name}</div>
-            <div className="ft-meta">{running === f.id ? '运行中…' : `${f.steps.length} 步${f.params.length ? ' · ' + f.params.join('、') : ''}`}{f.lastOk === false && running !== f.id ? ' · 上次失败' : ''}</div>
-          </div>) })}
+      {ask && <AskSheet kind="flow" prefix={`在${app}里`} onClose={() => setAsk(false)} />}
+      {R.msg && !R.res && <div className="imp-msg ok" style={{ margin: '12px 0 0' }}>{R.msg}</div>}
+      {flows.length > 0 && <div className="deck-h"><span>全部 Flow</span><span className="t12">{flat ? '点运行键直接跑' : '点卡片展开，点运行键直接跑'}</span></div>}
+      <div className={`deck ${flat ? 'flat' : ''} ${sel && !flat ? 'has-open' : ''}`}>
+        {flows.map((f, i) => {
+          const c = tint(look, SHIFTS[i % 5]); const on = flat || sel === f.id
+          return (
+            <div key={f.id} className={`wcard mesh ${on ? 'open' : ''} ${R.running === f.id ? 'busy' : ''}`} style={{ ...meshVars(c, true), zIndex: i + 1 }}>
+              <div className="wc-head" role="button" tabIndex={0} aria-expanded={on}
+                onClick={() => !flat && setSel(on ? null : f.id)} onKeyDown={e => { if (!flat && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSel(on ? null : f.id) } }}>
+                <span className="wc-ic"><AppIcon app={f.app} pkg={f.pkg || pkg} s={34} /><span className="wc-gl"><Icon n={flowGlyph(f)} s={10} w={2.4} /></span></span>
+                <div className="grow"><div className="wc-name ell">{f.name}</div><div className="wc-meta ell">{R.running === f.id ? '运行中…' : flowMeta(f)}</div></div>
+                <button className="ft-play press" onClick={e => { e.stopPropagation(); R.start(f) }} aria-label={`运行 ${f.name}`}><Icon n="play" s={13} w={2.6} /></button>
+              </div>
+              <div className="wc-face" aria-hidden={on}>
+                <span className="wc-no">{String(i + 1).padStart(2, '0')}</span>
+                <span className="wc-hint">{f.params.length ? `需要填写：${f.params.join('、')}` : f.desc || `${f.steps.length} 步，点开看步骤`}</span>
+              </div>
+              <div className="wc-body"><div className="wc-in">
+                <ol className="wc-steps">{f.steps.slice(0, 6).map((st, k) => <li key={k}><span>{k + 1}</span><div className="ell">{stepLabel(st)}</div></li>)}</ol>
+                {f.steps.length > 6 && <div className="wc-more">… 共 {f.steps.length} 步</div>}
+                <div className="wc-btns"><button className="btn-ghost press" onClick={() => go(`flow:${f.id}` as View)}><Icon n="pen" s={15} w={2} />编辑</button>
+                  <button className="wc-run press" onClick={() => R.start(f)}><Icon n="play" s={13} w={2.6} />{R.running === f.id ? '运行中…' : '运行'}</button></div>
+              </div></div>
+            </div>)
+        })}
       </div>
-      {flows.length > 0 && <div className="t13" style={{ textAlign: 'center', marginTop: 14 }}>点卡片运行，点右上角编辑</div>}
-      {ask && <ParamSheet f={ask} onClose={() => setAsk(null)} onRun={v => run(ask, v)} />}
-    </section>
-  )
-}
-
-const kindIcon: Record<string, string> = { tap: 'tap', input: 'keyboard', enter: 'enter', scroll: 'scroll', swipe: 'scroll', key: 'left', wait: 'clock', sleep: 'hourglass', if: 'code', while: 'clock', do: 'play', for: 'list', set: 'pen', call: 'bolt', break: 'x', continue: 'right', else: 'down', endif: 'check', endwhile: 'check', dowhile: 'check', endfor: 'check' }
-
-const ADD_STEPS: { label: string; s: FlowStep }[] = [
-  { label: '回车 / 搜索', s: { kind: 'enter' } },
-  { label: '等待文字出现', s: { kind: 'wait', sel: { text: '' } } },
-  { label: '等 1 秒', s: { kind: 'sleep', ms: 1000 } },
-  { label: '返回', s: { kind: 'key', key: 'back' } },
-  { label: '向下滚动', s: { kind: 'scroll', forward: true } },
-  { label: '点击文字', s: { kind: 'tap', sel: { text: '' } } },
-  { label: '输入文字', s: { kind: 'input', text: '' } },
-]
-
-function FlowEdit({ id, settings, done }: { id: string; settings: Settings; done: () => void }) {
-  const [f, setF] = useState<Flow | undefined>(() => loadFlows().find(x => x.id === id))
-  const [open, setOpen] = useState<number | null>(null)
-  const [add, setAdd] = useState(false)
-  const [ai, setAi] = useState(''), [aiBusy, setAiBusy] = useState(false), [draft, setDraft] = useState<Flow | null>(null)
-  const [msg, setMsg] = useState('')
-  const look = useAppLook(f?.app || '', f?.pkg)
-  if (!f) return <div className="empty">这个 Flow 不存在了</div>
-  const put = (n: Flow) => { const x = { ...n, params: paramsIn(n.steps), updated: Date.now() }; setF(x); upsertFlow(x) }
-  const setStep = (i: number, s: FlowStep) => put({ ...f, steps: f.steps.map((x, j) => j === i ? s : x) })
-  const move = (i: number, d: number) => { const a = [...f.steps]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; put({ ...f, steps: a }); setOpen(j) }
-  const optimize = async () => {
-    setAiBusy(true); setDraft(null); setMsg('')
-    let out = ''
-    try {
-      await streamChat({ settings, tier: 'neon', think: false, signal: new AbortController().signal,
-        system: `你是安卓无障碍自动化专家。用户给你一个 Flow（JSON），请优化后只输出一个 JSON 对象 {"name","desc","steps"}，不要别的文字。规则：
-- 删掉重复、无意义、误触的步骤；保留 launch 作为第一步
-- 选择器优先用稳定的 id 和简短文字；坐标 x/y 是 0-1 的屏幕比例，保留作为兜底
-- 会变化的内容（搜索词、地址、商品、联系人）改成 {参数名}，参数名用简短中文
-- 输入后需要搜索就加 {"kind":"enter"}；页面切换后加合适的 wait 或 sleep
-- 开屏广告、弹窗用 optional:true 的 tap（比如 跳过、我知道了、关闭）
-- 付款、提交订单、发送、删除这类步骤加 confirm:true
-- 允许用 if/else/while/do-while/for/set/call 等逻辑节点代替重复步骤；循环必须有明确退出条件（cond 或 for 的 from/to），单循环默认最多 20 次
-- 禁止编造不存在的选择器；只用录制/屏幕上真实出现的 id、文字或坐标
-- 每步可以写一个简短中文 note 说明`,
-        messages: [{ role: 'user', content: `${ai ? '额外要求：' + ai + '\n' : ''}应用：${f.app}\n当前 Flow：${JSON.stringify({ name: f.name, desc: f.desc, steps: f.steps })}` }],
-        onDelta: t => { out = t } })
-      const j = JSON.parse(out.slice(out.indexOf('{'), out.lastIndexOf('}') + 1))
-      if (!Array.isArray(j.steps) || !j.steps.length) throw new Error('模型没有给出步骤')
-      setDraft({ ...f, name: j.name || f.name, desc: j.desc || f.desc, steps: tidy(j.steps, f.app) })
-    } catch (e) { setMsg('优化失败：' + ((e as Error).message || '')) } finally { setAiBusy(false) }
-  }
-  const test = async () => {
-    const vals: Record<string, string> = {}
-    for (const p of f.params) { const v = prompt(`试运行 · ${p}`); if (v == null) return; vals[p] = v }
-    setMsg('运行中…')
-    try { const r = await runFlow(f, vals); setMsg(r.ok ? `完成，${r.done} 步${r.ms != null ? ` · ${(r.ms / 1000).toFixed(1)} 秒` : ''}` : `卡在第 ${(r.failedAt ?? 0) + 1} 步：${r.reason}`); if (!r.ok && r.failedAt != null) setOpen(r.failedAt) }
-    catch (e) { setMsg((e as Error).message) }
-  }
-  const S = draft || f
-  return (
-    <section className="fade">
-      <div className="fe-head" style={{ background: tint(look).soft }}>
-        <span className="fh-ring sm"><AppIcon app={f.app} pkg={f.pkg} s={44} /></span>
-        <div className="grow" style={{ minWidth: 0 }}>
-          <input className="fe-app" value={f.app} onChange={e => put({ ...f, app: e.target.value })} placeholder="应用" />
-          <input className="fe-name" value={f.name} onChange={e => put({ ...f, name: e.target.value })} placeholder="名称，比如 搜索" />
-        </div>
-      </div>
-      <input className="inp" style={{ marginTop: 10 }} value={f.desc} onChange={e => put({ ...f, desc: e.target.value })} placeholder="说明（模型靠它判断什么时候用）" />
-      {f.params.length > 0 && <div className="t13" style={{ marginTop: 8 }}>参数：{f.params.map(p => <span key={p} className="phone-chip" style={{ marginRight: 6 }}>{`{${p}}`}</span>)}</div>}
-
-      <div className="dev-card" style={{ marginTop: 14 }}>
-        <div className="dev-top"><GlassIcon n="spark" tone="plum" s={40} /><div className="grow"><div className="t16 b">用 AI 优化</div><div className="t13">清理多余步骤、提取参数、加上等待和弹窗处理</div></div></div>
-        <input className="inp" value={ai} onChange={e => setAi(e.target.value)} placeholder="额外要求（可选），比如 搜索后点第一篇笔记" />
-        <div className="dev-acts"><button className="btn-ink" disabled={aiBusy} onClick={optimize}>{aiBusy ? '优化中…' : '优化'}</button>
-          {draft && <><button className="btn-ink" onClick={() => { put(draft); setDraft(null); setMsg('已采用优化结果') }}>采用（{draft.steps.length} 步）</button><button className="btn-ghost" onClick={() => setDraft(null)}>放弃</button></>}</div>
-        {draft && <div className="t13">预览：{draft.name}{draft.desc ? ' · ' + draft.desc : ''}</div>}
-      </div>
-
-      <div className="sec">{draft ? '优化后的步骤（预览）' : `步骤 · ${f.steps.length}`}</div>
-      <ol className="flow-steps tl">{S.steps.map((s, i) => (
-        <li key={i} className={`${open === i && !draft ? 'open' : ''} ${draft ? 'ghost' : ''}`} style={{ ['--tc' as string]: tint(look).solid, ['--ts' as string]: tint(look).soft }}>
-          <span className="tl-node">{s.kind === 'launch' ? <AppIcon app={f.app} pkg={f.pkg} s={30} /> : <Icon n={kindIcon[s.kind] || 'bolt'} s={16} w={2} />}</span>
-          <div className="tl-card">
-          <button className="fs-head" onClick={() => !draft && setOpen(open === i ? null : i)}>
-            <span className="fs-n">{i + 1}</span><span className="grow ell">{stepLabel(s)}</span>
-            {s.optional && <span className="fs-tag">可选</span>}{s.confirm && <span className="fs-tag warn">确认</span>}
-          </button>
-          {open === i && !draft && <div className="fs-body">
-            {(s.kind === 'input') && <input className="inp" value={s.text || ''} onChange={e => setStep(i, { ...s, text: e.target.value })} placeholder="输入的文字，可用 {参数}" />}
-            {(s.kind === 'tap' || s.kind === 'wait') && <input className="inp" value={s.sel?.text || ''} onChange={e => setStep(i, { ...s, sel: { ...s.sel, text: e.target.value } })} placeholder="按文字找按钮" />}
-            {s.kind === 'sleep' && <input className="inp" inputMode="numeric" value={s.ms || 1000} onChange={e => setStep(i, { ...s, ms: Number(e.target.value) || 1000 })} placeholder="毫秒" />}
-            <input className="inp" value={s.note || ''} onChange={e => setStep(i, { ...s, note: e.target.value || undefined })} placeholder="备注（显示在悬浮条上）" />
-            {s.sel?.id && <div className="t12 ell">控件 id：{s.sel.id}</div>}
-            <div className="dev-acts">
-              <button className={`chip-t ${s.optional ? 'on' : ''}`} onClick={() => setStep(i, { ...s, optional: !s.optional })}>可选</button>
-              <button className={`chip-t ${s.confirm ? 'on' : ''}`} onClick={() => setStep(i, { ...s, confirm: !s.confirm })}>执行前确认</button>
-              <button className="chip-t" onClick={() => move(i, -1)}>上移</button><button className="chip-t" onClick={() => move(i, 1)}>下移</button>
-              <button className="chip-t danger" onClick={() => { put({ ...f, steps: f.steps.filter((_, j) => j !== i) }); setOpen(null) }}>删除</button>
-            </div></div>}
-          </div>
-        </li>))}</ol>
-      {!draft && <>
-        {add ? <div className="dev-acts">{ADD_STEPS.map(a => <button key={a.label} className="chip-t" onClick={() => { put({ ...f, steps: [...f.steps, { ...a.s, sel: a.s.sel ? { ...a.s.sel } : undefined }] }); setAdd(false); setOpen(f.steps.length) }}>{a.label}</button>)}</div>
-          : <button className="add-btn press" onClick={() => setAdd(true)}><Icon n="plus" s={18} w={2} />添加步骤</button>}
-        <div className="dev-acts" style={{ marginTop: 14 }}>
-          <button className="btn-ink" onClick={test}><Icon n="play" s={14} w={2.4} />试运行</button>
-          <button className="btn-ghost danger" onClick={() => { if (confirm(`删除 Flow「${f.name}」？`)) { saveFlows(loadFlows().filter(x => x.id !== f.id)); done() } }}>删除 Flow</button>
-        </div></>}
-      {msg && <div className="imp-msg ok" style={{ marginTop: 12 }}>{msg}</div>}
+      {R.ui}
     </section>
   )
 }
@@ -887,17 +875,59 @@ const PHONE_PROMPT = `你现在连着用户的安卓手机，可以用工具替�
 6. 用户让你新建或优化 Flow 时，用 flow_save；选择器优先用 phone_screen 里看到的文字。
 7. 做完后用一两句话告诉用户结果。`
 
+/** v0.20：对话里的确认卡 / 结果卡。技能、MCP、Flow 的保存和删除先在这里确认；保存后可撤销；Flow 可试跑（AI 视觉学到的位置自动存回）。 */
+const CARD_STATUS: Record<ChatCard['status'], string> = { pending: '待确认', saved: '已保存', cancelled: '已取消', undone: '已撤销', running: '运行中…', done: '已完成', failed: '没跑完' }
+const CAT_TAG: Record<string, string> = { ai: 'AI 视觉', logic: '逻辑', var: '变量', cls: '类', confirm: '需确认' }
+function CardView({ c, live, patch }: { c: ChatCard; live: boolean; patch: (p: Partial<ChatCard>) => void }) {
+  const R = useRunner()
+  const waiting = c.status === 'pending' && isWaiting(c.id)
+  const fid = (c.after as { id?: string } | null)?.id || (c.before as { id?: string } | null)?.id
+  const flow = (c.kind === 'flow' || c.kind === 'run') && fid ? loadFlows().find(f => f.id === fid) : undefined
+  const [more, setMore] = useState(false)
+  useEffect(() => { if (R.msg && !R.running) patch({ note: '试跑：' + R.msg }) }, [R.msg, R.running]) // eslint-disable-line react-hooks/exhaustive-deps
+  const st = c.status === 'pending' && !waiting ? '已失效' : c.status === 'saved' && c.op === 'delete' ? '已删除' : CARD_STATUS[c.status]
+  const srv = (c.after || c.before) as McpServer | null
+  const lines = c.lines || []
+  const shown = more ? lines : lines.slice(0, 8)
+  return (
+    <div className={`ccard ${c.kind} st-${c.status} ${waiting ? 'wait' : ''}`}>
+      <div className="cc-head">
+        {c.kind === 'skill' ? <span className={`ag-i ${c.tone || 'coral'}`}><Icon n={c.icon || 'spark'} s={20} w={1.9} /></span>
+          : c.kind === 'mcp' ? <Favicon site={srv?.site || siteOf(srv?.url || '')} status={srv?.status || 'unknown'} />
+            : <AppIcon app={c.app || ''} pkg={c.pkg} s={40} />}
+        <div className="grow"><div className="cc-t">{c.title}</div><div className="cc-n ell">{c.name}</div>{c.sub && <div className="cc-s ell">{c.sub}</div>}</div>
+        <span className={`cc-st ${c.status === 'pending' && !waiting ? 'expired' : ''}`}>{st}</span>
+      </div>
+      {c.fields.length > 0 && <dl className="cc-kv">{c.fields.map(f => <div key={f.k}><dt>{f.k}</dt><dd>{f.v}</dd></div>)}</dl>}
+      {lines.length > 0 && <ol className="cc-steps">{shown.map(([cat, t], k) => <li key={k} className={`cat-${cat}`}><span className="cc-no">{k + 1}</span><span className="grow">{t}</span>{CAT_TAG[cat] && <span className="cc-tag">{CAT_TAG[cat]}</span>}</li>)}
+        {lines.length > 8 && <li className="cc-more"><button onClick={() => setMore(!more)}>{more ? '收起' : `展开全部 ${lines.length} 步`}</button></li>}</ol>}
+      {c.warn?.length ? <ul className="cc-warn">{c.warn.map(w => <li key={w}>{w}</li>)}</ul> : null}
+      {c.note && <div className={`cc-note ${c.status === 'failed' ? 'bad' : ''}`}>{c.note}</div>}
+      {waiting && <div className="cc-btns"><button className="btn-ghost press" onClick={() => decide(c.id, false)}>取消</button>
+        <button className={`cc-ok press ${c.op === 'delete' ? 'danger' : ''}`} onClick={() => decide(c.id, true)}><Icon n={c.op === 'delete' ? 'trash' : 'check'} s={15} w={2.4} />{c.op === 'delete' ? '删除' : '保存'}</button></div>}
+      {!live && (c.status === 'saved' || ((c.status === 'done' || c.status === 'failed') && flow)) && <div className="cc-btns">
+        {c.status === 'saved' && <button className="btn-ghost press" onClick={() => patch({ status: 'undone', note: undoCard(c) })}><Icon n="redo" s={14} w={2.2} />撤销</button>}
+        {flow && c.op !== 'delete' && <button className="btn-ghost press" onClick={() => window.dispatchEvent(new CustomEvent('lumi-go', { detail: `flow:${flow.id}` }))}><Icon n="pen" s={14} w={2.2} />打开</button>}
+        {flow && c.kind === 'flow' && c.op !== 'delete' && <button className="cc-ok press" disabled={!isNative || !!R.running} title={isNative ? '' : '需要安卓 App'} onClick={() => R.start(flow)}>
+          <Icon n="play" s={13} w={2.6} />{R.running ? '试跑中…' : isNative ? '试跑' : '试跑（需安卓 App）'}</button>}
+      </div>}
+      {R.ui}
+    </div>
+  )
+}
+
 function Steps({ steps, live }: { steps: Step[]; live: boolean }) {
   const [open, setOpen] = useState(false)
   const cur = steps[steps.length - 1]
+  const phone = steps.some(x => isPhoneTool(x.name))
   return (
     <div className="steps">
-      <button onClick={() => setOpen(!open)}><Icon n="phone" s={15} w={2} />
-        <span className="grow ell">{live && cur ? (cur.result === undefined ? `正在${cur.label}…` : cur.label) : `操作了手机 · ${steps.length} 步`}</span>
+      <button onClick={() => setOpen(!open)}><Icon n={phone ? 'phone' : 'bolt'} s={15} w={2} />
+        <span className="grow ell">{live && cur ? (cur.result === undefined ? `正在${cur.label}…` : cur.label) : phone ? `操作了手机 · ${steps.length} 步` : `用了 ${steps.length} 个工具`}</span>
         <Icon n="down" s={14} w={2.2} /></button>
       {open && <ol>{steps.map((st, i) => (
         <li key={i} className={st.ok === false ? 'bad' : ''}><span className="sd"><Icon n={st.ok === false ? 'x' : 'check'} s={11} w={2.8} /></span>
-          <div className="grow"><div>{st.label}</div>{st.result && st.name !== 'phone_screen' && <div className="sr">{st.result}</div>}</div></li>))}</ol>}
+          <div className="grow"><div>{st.label}</div>{st.result && (st.name !== 'phone_screen' || st.ok === false) && <div className="sr">{st.result}</div>}</div></li>))}</ol>}
     </div>
   )
 }
@@ -1115,13 +1145,58 @@ function CharEdit({ c, save, remove, onChat }: { c: Character; save: (c: Charact
   )
 }
 
+function useSkills() {
+  const [a, setA] = useState<Agent[]>(allAgents)
+  useEffect(() => { const on = () => setA(allAgents()); window.addEventListener('lumi-skills', on); return () => window.removeEventListener('lumi-skills', on) }, [])
+  return a
+}
+
+/** v0.20：「在对话里定制」入口。点开写一句话（或点示例），新开一段对话发给模型，模型用工具生成，并在对话里弹确认卡。 */
+const ASK: Record<'skill' | 'mcp' | 'flow', { btn: string; title: string; hint: string; ph: string; ex: string[]; wrap: (t: string) => string }> = {
+  skill: { btn: '用对话定制技能', title: '描述你想要的技能', hint: '说清楚它扮演谁、怎么做、输出什么格式。生成后会弹出确认卡，点「保存」才会加到技能里。', ph: '比如：帮我做个技能，把会议录音整理成纪要和待办',
+    ex: ['帮我做个技能：小红书文案助手，标题带数字，正文分段，结尾 5 个话题标签', '帮我做个技能：英文邮件回复，语气礼貌简洁，先给中文要点再给英文全文'], wrap: t => /技能/.test(t) ? t : '帮我做个技能：' + t },
+  mcp: { btn: '用对话添加 MCP', title: '添加 MCP 服务器', hint: '贴上 Streamable HTTP 地址（和令牌，如果有）。会先测试连接、读取工具，再弹确认卡。', ph: '比如：加一个 MCP https://mcp.example.com/mcp',
+    ex: ['加一个 MCP：https://mcp.deepwiki.com/mcp'], wrap: t => /mcp/i.test(t) ? t : '加一个 MCP：' + t },
+  flow: { btn: '按任务生成', title: '按任务生成 Flow', hint: '用一句话描述手机上要做的事。AI 生成步骤：知道的界面走原生选择器，不认识的界面用 AI 视觉步（第一次要截图问模型，找到后存回，之后走原生）。',
+    ph: '比如：每天帮我在小红书收藏前5篇南京咖啡笔记', ex: ['每天帮我在小红书收藏前5篇南京咖啡笔记', '在美团搜索{店名}，把招牌菜加入购物车，停在结算页', '打开微信，把{内容}发给文件传输助手'],
+    wrap: t => `按任务生成 Flow：${t}\n（不认识的界面用 AI 视觉步，会变的内容做成 {参数}，付款、发送类步骤加确认。）` },
+}
+const askChat = (text: string) => window.dispatchEvent(new CustomEvent('lumi-ask', { detail: text }))
+function AskSheet({ kind, prefix = '', onClose }: { kind: keyof typeof ASK; prefix?: string; onClose: () => void }) {
+  const a = ASK[kind]
+  const [t, setT] = useState(prefix)
+  const go = (x: string) => { if (!x.trim()) return; onClose(); askChat(a.wrap(x.trim())) }
+  return (
+    <div className="sheet-back" onClick={onClose}>
+      <div className="sheet fsheet ask-sheet" onClick={e => e.stopPropagation()}>
+        <div className="grabber" />
+        <div className="t18 b" style={{ marginBottom: 4 }}>{a.title}</div>
+        <div className="t13" style={{ marginBottom: 12 }}>{a.hint}</div>
+        <textarea className="inp ask-in" rows={3} autoFocus placeholder={a.ph} value={t} onChange={e => setT(e.target.value)} />
+        <div className="ask-ex">{a.ex.map(x => <button key={x} className="chip press" onClick={() => go(x)}>{x}</button>)}</div>
+        <button className="btn-run" disabled={!t.trim()} onClick={() => go(t)}><Icon n="spark" s={15} w={2.2} />去对话里生成</button>
+      </div>
+    </div>
+  )
+}
+function AskBar({ kind }: { kind: keyof typeof ASK }) {
+  const [open, setOpen] = useState(false)
+  return <>
+    <button className="ask-bar press-row" onClick={() => setOpen(true)}><span className="ask-ic"><Icon n="spark" s={16} w={2.2} /></span>
+      <div className="grow"><div className="t15 b">{ASK[kind].btn}</div><div className="t12">{ASK[kind].ph}</div></div><Icon n="right" s={15} w={2} c="var(--label3)" /></button>
+    {open && <AskSheet kind={kind} onClose={() => setOpen(false)} />}
+  </>
+}
+
 function Agents({ onPick }: { onPick: (a: Agent) => void }) {
+  const list = useSkills()
   return (
     <section className="fade">
-      <div className="agents">{AGENTS.map(a => (
+      <AskBar kind="skill" />
+      <div className="agents">{list.map(a => (
         <button key={a.id} className={`agent ${a.tone} press-row`} onClick={() => onPick(a)}>
           <span className="ag-i"><Icon n={a.icon} s={22} w={1.9} /></span>
-          <div className="grow"><div className="ag-n">{a.name}</div><div className="t13">{a.desc}</div></div>
+          <div className="grow"><div className="ag-n">{a.name}{a.custom && <span className="ag-tag">自定义</span>}</div><div className="t13">{a.desc}</div></div>
           <Icon n="right" s={16} w={2} c="var(--label3)" />
         </button>))}
       </div>
@@ -1141,9 +1216,9 @@ function MediaView({ m }: { m: Media }) {
     : <a href={url} target="_blank" rel="noreferrer"><img className="media" src={url} alt={m.prompt} /></a>
 }
 
-function Chat({ conv, settings, tier, think, pending, clearPending, project, onMenu, onNew, onMode, update }: {
+function Chat({ conv, settings, tier, think, pending, clearPending, project, menuBtn, onNew, onMode, update }: {
   conv: Conv; settings: Settings; tier: Tier; think: boolean; pending: Pending | null; clearPending: () => void; project?: Project
-  onMenu: () => void; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
+  menuBtn?: React.ReactNode; onNew: () => void; onMode: () => void; update: (fn: (c: Conv) => Conv) => void
 }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1154,10 +1229,14 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
   const composing = useRef(false)
+  const taRef = useRef<HTMLTextAreaElement>(null)
   const agent = agentById(conv.agent)
   const char = charById(conv.char)
   const folder = project?.folder
-  const toolNames = [...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell', 'flow_list', 'flow_run', 'flow_save'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : [])]
+  // v0.20：普通对话（非角色扮演）也带定制工具：技能 / MCP / Flow 的查看、保存（确认卡）、删除；flow_run 只在安卓 App 里有
+  const custom = !char && settings.chatCustom !== false
+  const toolNames = [...new Set([...(conv.phone ? ['phone_screen', 'phone_tap', 'phone_input', 'phone_scroll', 'phone_swipe', 'phone_key', 'phone_open_app', 'phone_shell', 'flow_list', 'flow_run', 'flow_save'] : []), ...(conv.phone || folder ? ['phone_save', 'phone_read', 'phone_files'] : []),
+    ...(custom ? CUSTOM_NAMES.filter(n => n !== 'flow_run' || isNative) : [])])]
   const rpUser = settings.rpUser || '用户'
   useEffect(() => { if (pinned.current) scroller.current?.scrollTo({ top: 1e9 }) }, [conv.messages])
 
@@ -1184,6 +1263,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     const content = (say ?? text).trim()
     if (!override && !content) return
     setText(''); setErr(''); setBusy(true); pinned.current = true
+    if (taRef.current) taRef.current.style.height = '' // 发出后输入框回到一行高
     ctrl.current = new AbortController()
     if (!override && mode !== 'chat') { setGen('chat'); await runMedia(mode, content); setBusy(false); ctrl.current = null; return }
     const base = override ?? [...conv.messages, { role: 'user' as const, content }]
@@ -1193,7 +1273,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     let thinkMs = 0
     const system = char ? rpSystem(char, rpUser, base, settings.rpMyLang !== false) : [agent?.prompt, project?.instructions ? `项目「${project.name}」的说明：\n${project.instructions}` : '',
       conv.phone ? PHONE_PROMPT + '\n\n用户保存的 Flow：\n' + flowSummary(loadFlows()) : '', folder ? `这个项目绑定了手机里的文件夹「${folder}」。用户要你写文件、做网页或保存内容时，用 phone_save 存进去（路径相对这个文件夹，比如 pages/index.html），存完告诉用户文件名。` : '',
-      settings.genUI && !conv.phone ? GENUI_PROMPT : ''].filter(Boolean).join('\n\n') || undefined
+      settings.genUI && !conv.phone ? GENUI_PROMPT : '', custom ? CUSTOM_PROMPT + (conv.phone ? '' : '\n\n用户保存的 Flow：\n' + flowSummary(loadFlows())) + (isNative ? '' : '\n\n（现在是网页版：可以保存 Flow，但不能运行，运行要在安卓 App 里。）') : ''].filter(Boolean).join('\n\n') || undefined
     if (toolNames.length && !char) { await agentLoop(base, system); return }
     try {
       const r = await streamChat({
@@ -1209,6 +1289,32 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
       if ((e as Error).name === 'AbortError') setLast(m => ({ ...m, stopped: true }))
       else setErr(friendly(e))
     } finally { setBusy(false); ctrl.current = null }
+  }
+  /** 执行一个工具。v0.20：保存 / 删除类先在对话里放确认卡，等用户点「保存」或「取消」；flow_run 附一张运行卡（应用图标 + 结果）。 */
+  const exec = async (name: string, args: Record<string, unknown>, steps: Step[]): Promise<string> => {
+    const show = (card: ChatCard) => { steps[steps.length - 1] = { ...steps[steps.length - 1], card }; update(c => { const m = [...c.messages]; m[m.length - 1] = { ...m[m.length - 1], steps: [...steps] }; return { ...c, messages: m } }) }
+    if (CUSTOM_NAMES.includes(name) && name !== 'flow_run' && name !== 'flow_list') {
+      const p = await proposeTool(name, args, { probe: probeMcp })
+      if (!p.card) return p.text || '出错了：没有结果'
+      show(p.card)
+      if (!MUTATING.has(name)) return p.text || ''
+      const ok = await waitDecision(p.card.id, ctrl.current?.signal)
+      if (!ok) { show({ ...p.card, status: 'cancelled' }); if (ctrl.current?.signal.aborted) throw new DOMException('stop', 'AbortError'); return '用户点了「取消」，没有保存。不要再提交同样的内容，问用户想怎么改。' }
+      const res = commitCard(p.card)
+      show({ ...p.card, status: 'saved' })
+      return res
+    }
+    if (name === 'flow_list') return runTool(name, args, folder)
+    if (isPhoneTool(name) && !isNative) return '出错了：只有安卓 App 里才能操作手机或运行 Flow'
+    if (name === 'flow_run') {
+      const f = loadFlows().find(x => x.id === args.id || x.name === args.id)
+      const card: ChatCard = { id: uid(), kind: 'run', op: 'run', title: '运行 Flow', name: f?.name || String(args.id), sub: f?.app, app: f?.app, pkg: f?.pkg, fields: [], status: 'running', before: null, after: f ? { id: f.id } : null }
+      if (f) show(card)
+      const out = await runTool(name, args, folder)
+      if (f) show({ ...card, status: /^Flow\s*「[^」]*」完成/.test(out) ? 'done' : 'failed', note: out.split('\n')[0].replace(/^Flow\s*/, '').replace(/。$/, '') })
+      return out
+    }
+    return runTool(name, args, folder)
   }
   /** 工具循环：模型要调用工具就执行，把结果喂回去，直到给出最终回答（最多 30 步）。 */
   const agentLoop = async (base: Msg[], system?: string) => {
@@ -1234,8 +1340,8 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
           steps.push({ ...toStep(tc.function.name, args, '', true), result: undefined })
           update(c => ({ ...c, messages: [...base, { role: 'assistant', content: r.text, tier, steps: [...steps] }] }))
           if (ctrl.current?.signal.aborted) throw new DOMException('stop', 'AbortError')
-          const out = isNative ? await runTool(tc.function.name, args, folder) : '出错了：只有安卓 App 里才能操作手机'
-          steps[steps.length - 1] = toStep(tc.function.name, args, out, !out.startsWith('出错了') && !/失败|没打开|不能/.test(out.slice(0, 12)))
+          const out = await exec(tc.function.name, args, steps)
+          steps[steps.length - 1] = { ...toStep(tc.function.name, args, out, !out.startsWith('出错了') && !/失败|没打开|不能/.test(out.slice(0, 12))), card: steps[steps.length - 1].card }
           raw.push({ role: 'tool', tool_call_id: tc.id, content: out })
           if (/^phone_(tap|open_app|key|swipe|scroll|input)$/.test(tc.function.name)) await new Promise(ok => setTimeout(ok, 700))
         }
@@ -1254,6 +1360,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
     if (pending && !started.current) { started.current = true; const p = pending; clearPending(); send(undefined, p.text, p.gen) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const regen = () => { const m = conv.messages; if (m.length >= 2 && !m[m.length - 1].media) send(m.slice(0, -1)) }
+  const patchCard = (i: number, id: string, p: Partial<ChatCard>) => update(c => ({ ...c, messages: c.messages.map((m, j) => j !== i ? m : { ...m, steps: m.steps?.map(st => st.card?.id === id ? { ...st, card: { ...st.card, ...p } } : st) }) }))
   const toggleFav = (i: number) => update(c => ({ ...c, messages: c.messages.map((m, j) => j === i ? { ...m, fav: !m.fav } : m) }))
   const last = conv.messages.length - 1
   const greets = char ? greetings(char, rpUser) : []
@@ -1280,6 +1387,7 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
                   <summary><Icon n="down" s={14} w={2.2} />{busy && i === last && !m.content ? '正在深度思考…' : `已深度思考${m.thinkMs ? ` · ${Math.max(1, Math.round(m.thinkMs / 1000))} 秒` : ''}`}</summary>
                   <div>{m.reasoning}</div></details>}
                 {m.steps?.length ? <Steps steps={m.steps} live={busy && i === last} /> : null}
+                {m.steps?.filter(st => st.card).map(st => <CardView key={st.card!.id} c={st.card!} live={busy && i === last} patch={p => patchCard(i, st.card!.id, p)} />)}
                 {m.trace && !busy && <button className="flow-save" onClick={() => { const tr = m.trace; update(c => ({ ...c, messages: c.messages.map((x, j) => j === i ? { ...x, trace: undefined } : x) })); send(undefined, `把刚才这次操作整理成一个 Flow，用 flow_save 保存。去掉多余和失败的步骤，会变的内容（搜索词、地址、商品名等）改成 {参数}，付款或提交、发送的步骤加 confirm。实际执行过的步骤：\n${JSON.stringify(tr)}`) }}>
                   <Icon n="bolt" s={15} w={2} />存成 Flow，下次一键运行</button>}
                 <div className="a-body">{m.media ? <MediaView m={m.media} /> : char ? <RpView src={runRegex(m.content, char, 'ai', 'display', rpUser)} streaming={busy && i === last} /> : <Markdown src={m.content} streaming={busy && i === last} onAction={s => !busy && send(undefined, s, 'chat')} />}
@@ -1302,17 +1410,18 @@ function Chat({ conv, settings, tier, think, pending, clearPending, project, onM
       </div>
       <div className="edge-top" />
       <Glass className="chat-bar" radius={26}>
-        <button className="cb-btn cb-side" onClick={onMenu} aria-label="侧栏"><Icon n="side" s={22} w={1.9} /></button>
+        {menuBtn}
         <div className="cb-t" onClick={onMode}><div className="ell b">{conv.title}</div><div className="cb-sub ell">{sub}<Icon n="down" s={11} w={2.4} /></div></div>
         <button className="cb-btn ring" onClick={onNew} aria-label="新对话"><Icon n="plus" s={20} w={2} /></button>
       </Glass>
-      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} phone={char ? undefined : () => update(c => ({ ...c, phone: !c.phone }))} phoneOn={conv.phone} /></div>
+      <div className="chat-menu"><GenMenu show={menu} gen={gen} setGen={setGen} onClose={() => setMenu(false)} onMode={onMode} phone={char ? undefined : () => update(c => ({ ...c, phone: !c.phone }))} phoneOn={conv.phone}
+        onTask={char || settings.chatCustom === false ? undefined : () => { const v = '按任务生成 Flow：'; setText(v); requestAnimationFrame(() => { const el = taRef.current; if (el) { el.focus(); el.setSelectionRange(v.length, v.length) } }) }} /></div>
       <div className="composer">
         <Glass className="c-field" radius={28}>
           <button className={`c-plus ${menu ? 'open' : ''}`} onClick={() => setMenu(v => !v)} aria-label="更多"><Icon n="plus" s={21} w={2} /></button>
           {conv.phone && <button className="gen-chip" onClick={() => update(c => ({ ...c, phone: false }))}><Icon n="phone" s={14} w={2.2} />手机操控<Icon n="x" s={12} w={2.4} /></button>}
           {gen !== 'chat' && <button className="gen-chip" onClick={() => setGen('chat')}><Icon n={gen === 'image' ? 'image' : 'film'} s={14} w={2.2} />{GEN_LABEL[gen]}<Icon n="x" s={12} w={2.4} /></button>}
-          <textarea rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
+          <textarea ref={taRef} rows={1} placeholder={gen === 'chat' ? (char ? `回复 ${char.name}…` : conv.messages.length ? '继续追问…' : '和栖语聊聊…') : gen === 'image' ? '描述想要的图片…' : '描述想要的视频…'} value={text}
             onCompositionStart={() => (composing.current = true)} onCompositionEnd={() => (composing.current = false)}
             onChange={e => { setText(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px' }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !composing.current && window.innerWidth > 700) { e.preventDefault(); if (!busy) send() } }} />
@@ -1350,9 +1459,9 @@ function usageOf(gu: GatewayUsage | null) {
 }
 const fmtTok = (n: number) => n >= 1e4 ? `${+(n / 1e4).toFixed(n >= 1e6 ? 0 : 1)} 万` : n.toLocaleString()
 
-function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, onPlans }: {
+function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, onPlans, onUpgrade }: {
   show: boolean; onClose: () => void; tier: Tier; setTier: (t: Tier) => void; think: boolean; setThink: (b: boolean) => void
-  plan: string | null; gu: GatewayUsage | null; onPlans: () => void
+  plan: string | null; gu: GatewayUsage | null; onPlans: () => void; onUpgrade: () => void
 }) {
   const [seg, setSeg] = useState<0 | 1>(0)
   const [pick, setPick] = useState<Tier>(tier)
@@ -1368,7 +1477,7 @@ function ModeSheet({ show, onClose, tier, setTier, think, setThink, plan, gu, on
         <div className="acct">
           <div><div className="t12">当前套餐</div><div className="acct-n serif">{plan || 'Free'}</div>
             <div className="t12">{u.limit ? `${u.win}已用 ${u.pct.toFixed(0)}%` : gu ? '还没有订阅' : '未连接网关'}{u.tokens ? ` · 近 14 天 ${fmtTok(u.tokens)} tokens` : ''}</div></div>
-          <button className="acct-btn" onClick={onPlans}>{plan ? '套餐' : '订阅'}</button>
+          <button className="acct-btn" onClick={plan ? onPlans : onUpgrade}>{plan ? '套餐' : '订阅'}</button>
         </div>
         <div className="seg2" style={{ ['--i' as string]: seg }}><span className="seg2-thumb" />
           <button className={seg === 0 ? 'on' : ''} onClick={() => setSeg(0)}>对话模型</button>
@@ -1415,7 +1524,7 @@ function Wallet({ settings, gu, onSettings }: { settings: Settings; gu: GatewayU
   const plan = gu?.planName || null
   const u = usageOf(gu)
   const connected = !!(settings.baseUrl && settings.apiKey)
-  const buy = () => { const url = purchasePage(settings); if (url) window.open(url, '_blank'); else onSettings() }
+  const buy = () => { const url = purchasePage(settings); if (url) openLink(url); else onSettings() }
   const ledger = [...days].reverse().filter(d => d.tokens > 0).slice(0, 8)
   const total = days.reduce((a, d) => a + d.tokens, 0)
   return (
@@ -1498,7 +1607,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
       <div className="sec">账号</div>
       <div className="list">{f('baseUrl', '网关', 'link', 'https://你的网关')}{f('apiKey', 'API Key', 'key', 'sk-…', 'password')}</div>
       <div className="key-link">
-        {kp ? <a href={kp} target="_blank" rel="noreferrer">获取密钥<Icon n="up" s={12} w={2.4} /></a> : <span className="t13">填写网关后可直接跳转获取密钥</span>}
+        <a href={kp} target="_blank" rel="noreferrer" onClick={e => { e.preventDefault(); openLink(kp) }}>获取密钥<Icon n="up" s={12} w={2.4} /></a>
       </div>
       <div className="sec">角色扮演</div>
       <div className="list">{f('rpUser', '我的名字', 'users', '用户（角色卡里的 {{user}}）')}
@@ -1510,6 +1619,9 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="row"><span className="ico"><Icon n="spark" s={16} w={2} /></span>
           <div className="grow"><div className="t16">卡片式回答</div><div className="t13">数据、步骤、对比用界面卡片展示</div></div>
           <Toggle on={s.genUI} set={b => set({ ...s, genUI: b })} /></div>
+        <div className="row"><span className="ico"><Icon n="bolt" s={16} w={2} /></span>
+          <div className="grow"><div className="t16">在对话里定制</div><div className="t13">说一句就能新建技能、MCP、Flow，保存前弹确认卡</div></div>
+          <Toggle on={s.chatCustom !== false} set={b => set({ ...s, chatCustom: b })} /></div>
       </div>
       <div className="sec">外观</div>
       <div className="list">
@@ -1526,8 +1638,14 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
           <span className="t16">选择壁纸图片</span><span className="t13" style={{ marginLeft: 'auto' }}>仅存本机</span></button>}
         <input ref={file} type="file" accept="image/*" hidden onChange={async e => {
           const fl = e.target.files?.[0]; if (!fl) return
-          const v = Date.now(); await putBlob('wallpaper:' + v, await shrinkImage(fl)); onWall(v); e.target.value = ''
+          try { const v = Date.now(); await putBlob('wallpaper:' + v, await shrinkImage(fl)); onWall(v) } catch { alert('这张图片打不开，换一张试试') } finally { e.target.value = '' }
         }} />
+      </div>
+      <div className="sec">会员与帮助</div>
+      <div className="list">
+        <button className="row press-row" onClick={() => openLink(purchasePage(s))}><span className="ico"><Icon n="crown" s={16} w={2} /></span><span className="t16 grow">升级会员</span><span className="t13">{plan || 'Pro / Max / Ultra'}</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
+        <button className="row press-row" onClick={() => openLink(feedbackPage())}><span className="ico"><Icon n="chat" s={16} w={2} /></span><span className="t16 grow">提交反馈</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
+        <button className="row press-row" onClick={() => openLink(PLATFORM_URL)}><span className="ico"><Icon n="globe" s={16} w={2} /></span><span className="t16 grow">官网</span><span className="t13">platform.qigai.tech</span><span className="ext-ic"><Icon n="up" s={12} w={2.4} /></span></button>
       </div>
       <button className="adv-toggle" onClick={() => setAdv(v => !v)}>高级设置<Icon n="down" s={14} w={2.2} /></button>
       {adv && <>
@@ -1537,7 +1655,7 @@ function SettingsPage({ s, set, plan, onWall }: { s: Settings; set: (s: Settings
         <div className="sec">页面地址</div>
         <div className="list">{f('keyUrl', '获取密钥', 'key', '默认 platform.qigai.tech/keys')}{f('purchaseUrl', '订阅页', 'wallet', '默认 platform.qigai.tech/upgrade')}</div>
       </>}
-      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.16 · 开源 MIT</div>
+      <div className="t12 foot">Key 只保存在本机 · 栖语 Lumi v0.23 · 开源 MIT</div>
     </section>
   )
 }
